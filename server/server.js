@@ -8,7 +8,88 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+
+// WebSocket protocol helpers & client registry
+const wsClientsByRide = new Map(); // rideId -> Set(socket)
+
+function makeWsAcceptKey(key) {
+  return crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+}
+
+function broadcastToRide(rideId, data, senderSocket = null) {
+  const room = wsClientsByRide.get(rideId);
+  if (!room) return;
+  const payloadStr = JSON.stringify(data);
+  const frame = encodeWsFrame(payloadStr);
+
+  for (const clientSocket of room) {
+    if (clientSocket !== senderSocket && clientSocket.writable) {
+      try {
+        clientSocket.write(frame);
+      } catch (e) {}
+    }
+  }
+}
+
+function encodeWsFrame(data) {
+  const buf = Buffer.from(data, 'utf8');
+  const len = buf.length;
+  let header;
+
+  if (len < 126) {
+    header = Buffer.from([0x81, len]);
+  } else if (len <= 65535) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  return Buffer.concat([header, buf]);
+}
+
+function decodeWsFrame(buffer) {
+  if (buffer.length < 2) return null;
+  const secondByte = buffer[1];
+  const isMasked = (secondByte & 0x80) === 0x80;
+  let payloadLen = secondByte & 0x7f;
+  let currentOffset = 2;
+
+  if (payloadLen === 126) {
+    if (buffer.length < 4) return null;
+    payloadLen = buffer.readUInt16BE(2);
+    currentOffset = 4;
+  } else if (payloadLen === 127) {
+    if (buffer.length < 10) return null;
+    payloadLen = Number(buffer.readBigUInt64BE(2));
+    currentOffset = 10;
+  }
+
+  let maskKey = null;
+  if (isMasked) {
+    if (buffer.length < currentOffset + 4) return null;
+    maskKey = buffer.slice(currentOffset, currentOffset + 4);
+    currentOffset += 4;
+  }
+
+  if (buffer.length < currentOffset + payloadLen) return null;
+  const rawData = buffer.slice(currentOffset, currentOffset + payloadLen);
+
+  if (isMasked && maskKey) {
+    for (let i = 0; i < rawData.length; i++) {
+      rawData[i] ^= maskKey[i % 4];
+    }
+  }
+
+  return rawData.toString('utf8');
+}
+
 
 const PORT = process.env.PORT || 5000;
 const DB_FILE = path.join(__dirname, 'payanam.db');
@@ -732,6 +813,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Offline Telemetry Batch Sync (flushes queued points recorded during dead zones)
+  if (pathname === '/api/telemetry/batch' && req.method === 'POST') {
+    getJsonBody((err, body) => {
+      const items = body.items || [];
+      const rideId = body.rideId;
+      console.log(`[RideSync DB] Syncing ${items.length} offline telemetry batch items for ride: ${rideId}`);
+      
+      if (rideId && items.length > 0) {
+        // Broadcast flushed batch to active room members
+        broadcastToRide(rideId, {
+          type: 'batch_telemetry',
+          rideId,
+          count: items.length,
+          items,
+        });
+      }
+
+      sendJson(200, { success: true, processed: items.length });
+    });
+    return;
+  }
+
   // Update Config (Switch DB driver, Supabase creds)
   if (pathname === '/api/config' && req.method === 'POST') {
     getJsonBody((err, body) => {
@@ -746,7 +849,69 @@ const server = http.createServer((req, res) => {
   sendJson(404, { error: 'Endpoint not found' });
 });
 
+// Real-Time Native WebSocket Protocol Handler
+server.on('upgrade', (req, socket, head) => {
+  if (req.headers['upgrade'] !== 'websocket') {
+    socket.destroy();
+    return;
+  }
+
+  const key = req.headers['sec-websocket-key'];
+  if (!key) {
+    socket.destroy();
+    return;
+  }
+
+  const acceptKey = makeWsAcceptKey(key);
+  const headers = [
+    'HTTP/1.1 101 Switching Protocols',
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    `Sec-WebSocket-Accept: ${acceptKey}`
+  ];
+
+  socket.write(headers.join('\r\n') + '\r\n\r\n');
+
+  let currentRideId = null;
+
+  socket.on('data', (buffer) => {
+    try {
+      const msgStr = decodeWsFrame(buffer);
+      if (!msgStr) return;
+      const msg = JSON.parse(msgStr);
+
+      if (msg.type === 'subscribe') {
+        currentRideId = msg.rideId;
+        if (!wsClientsByRide.has(currentRideId)) {
+          wsClientsByRide.set(currentRideId, new Set());
+        }
+        wsClientsByRide.get(currentRideId).add(socket);
+        socket.write(encodeWsFrame(JSON.stringify({ type: 'subscribed', rideId: currentRideId })));
+      } else if (msg.type === 'location_update' || msg.type === 'quick_pin' || msg.type === 'sos_alert' || msg.type === 'batch_telemetry') {
+        const rideId = msg.rideId || currentRideId;
+        if (rideId) {
+          broadcastToRide(rideId, msg, socket);
+        }
+      }
+    } catch (e) {}
+  });
+
+  socket.on('close', () => {
+    if (currentRideId && wsClientsByRide.has(currentRideId)) {
+      wsClientsByRide.get(currentRideId).delete(socket);
+    }
+  });
+
+  socket.on('error', () => {
+    if (currentRideId && wsClientsByRide.has(currentRideId)) {
+      wsClientsByRide.get(currentRideId).delete(socket);
+    }
+  });
+});
+
 server.listen(PORT, () => {
   console.log(`[RideSync DB Server] Running on http://localhost:${PORT}`);
   console.log(`[RideSync DB Server] Local database ready at: ${DB_FILE}`);
+  console.log(`[RideSync DB Server] Low-latency WebSocket server active at ws://localhost:${PORT}/ws`);
 });
+
