@@ -706,7 +706,7 @@ body {
 }
 
 .app-input {
-  background: var(--bg-black);
+  background: var(--bg-card);
   border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-md);
   padding: 12px 14px;
@@ -716,7 +716,7 @@ body {
   outline: none;
   width: 100%;
   box-sizing: border-box;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, background-color 0.2s;
 }
 
 .app-input::placeholder {
@@ -736,6 +736,42 @@ body {
 .app-input:focus {
   border-color: var(--primary-orange);
   box-shadow: 0 0 0 2px var(--primary-orange-glow);
+=======
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+/* High-Visibility Date & Time Picker Native Indicator Icons */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+.app-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(0.8) sepia(100%) saturate(600%) hue-rotate(340deg) !important;
+  opacity: 1 !important;
+  font-size: 18px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: transform 0.15s, filter 0.2s;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+.app-input::-webkit-calendar-picker-indicator:hover {
+  transform: scale(1.25);
+}
+
+[data-theme="sunlight"] input[type="date"]::-webkit-calendar-picker-indicator,
+[data-theme="sunlight"] input[type="time"]::-webkit-calendar-picker-indicator,
+[data-theme="sunlight"] .app-input::-webkit-calendar-picker-indicator {
+  filter: invert(0) brightness(0.1) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="night"] input[type="date"]::-webkit-calendar-picker-indicator,
+[data-theme="night"] input[type="time"]::-webkit-calendar-picker-indicator,
+[data-theme="night"] .app-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.8) sepia(100%) saturate(600%) hue-rotate(340deg) !important;
+  opacity: 1 !important;
+>>>>>>> Stashed changes
 }
 
 .input-row-2 {
@@ -753,76 +789,180 @@ body {
 .btn-pill-action {
   background: rgba(255, 107, 0, 0.15);
   color: var(--primary-orange);
-  border: 1px solid rgba(255, 107, 0, 0.3);
-  padding: 6px 12px;
+  border: 1.5px solid rgba(255, 107, 0, 0.35);
+  padding: 6px 14px;
   border-radius: var(--radius-full);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
+  transition: transform 0.15s, background-color 0.2s;
 }
 
-/* Waypoint List */
+.btn-pill-action:hover {
+  background: var(--primary-orange);
+  color: #FFF;
+  transform: scale(1.05);
+}
+
+/* Waypoint List & Drag-and-Drop Reordering */
 .waypoint-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .waypoint-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-md);
-  padding: 10px 14px;
+  padding: 12px 14px;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.15s, border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+  position: relative;
 }
 
-.wp-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.waypoint-item:active {
+  cursor: grabbing;
+}
+
+.waypoint-item.is-dragging {
+  opacity: 0.45;
+  transform: scale(0.98);
+  border-color: var(--primary-orange) !important;
+  box-shadow: 0 0 16px var(--primary-orange-glow);
+}
+
+.waypoint-item.drag-over-above {
+  border-top: 3px solid var(--primary-orange) !important;
+  background: rgba(255, 107, 0, 0.08);
+}
+
+.waypoint-item.drag-over-below {
+  border-bottom: 3px solid var(--primary-orange) !important;
+  background: rgba(255, 107, 0, 0.08);
+}
+
+.drag-handle {
+  font-size: 18px;
+  color: var(--primary-orange);
+  cursor: grab;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background-color 0.15s;
+}
+
+.drag-handle:hover {
+  background: rgba(255, 107, 0, 0.15);
 }
 
 .wp-icon {
-  font-size: 18px;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wp-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .wp-name {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
 }
 
 .wp-type-badge {
   font-size: 10px;
-  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.5px;
   color: var(--text-muted);
-  display: block;
+  text-transform: uppercase;
 }
+
+.wp-type-badge.start { color: var(--accent-green); }
+.wp-type-badge.destination { color: var(--accent-red); }
+.wp-type-badge.tea { color: var(--accent-amber); }
+.wp-type-badge.fuel { color: var(--accent-cyan); }
+.wp-type-badge.food { color: var(--primary-orange); }
 
 .wp-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.wp-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
+.wp-order-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
   cursor: pointer;
-  padding: 4px;
-  font-size: 14px;
+  transition: background-color 0.15s, color 0.15s;
 }
 
-.wp-btn:hover {
-  color: var(--text-primary);
+.wp-order-btn:hover {
+  background: var(--primary-orange);
+  color: #FFF;
+  border-color: var(--primary-orange);
+}
+
+.btn-remove-stop {
+  background: rgba(255, 23, 68, 0.15);
+  border: 1px solid rgba(255, 23, 68, 0.35);
+  color: var(--accent-red);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.15s;
+}
+
+.btn-remove-stop:hover {
+  background: var(--accent-red);
+  color: #FFF;
+  transform: scale(1.1);
 }
 
 .btn-add-stop {
   background: var(--bg-card);
-  border: 1px dashed var(--border-strong);
+  border: 1.5px dashed var(--primary-orange);
   border-radius: var(--radius-md);
-  color: var(--accent-cyan);
+  color: var(--primary-orange);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 12px;
+  width: 100%;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: background-color 0.2s, transform 0.15s;
+}
+
+.btn-add-stop:hover {
+  background: rgba(255, 107, 0, 0.1);
+  transform: translateY(-1px);
+}
   padding: 12px;
   font-weight: 600;
   font-size: 13px;
@@ -2773,6 +2913,148 @@ body {
   border-color: var(--primary-orange);
   background: rgba(255, 107, 0, 0.15);
   color: var(--primary-orange);
+}
+
+/* Discover Stops & Viewpoints Modal Styling */
+.discovery-search {
+  margin-bottom: 12px;
+}
+
+.category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 12px 0;
+  margin-bottom: 4px;
+}
+
+.cat-pill {
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cat-pill:hover {
+  border-color: var(--primary-orange);
+  color: var(--text-primary);
+}
+
+.cat-pill.active {
+  background: var(--primary-orange) !important;
+  border-color: var(--primary-orange) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px var(--primary-orange-glow);
+}
+
+[data-theme="sunlight"] .cat-pill {
+  background: #F1F5F9;
+  border-color: #0F172A;
+  color: #000000;
+}
+
+[data-theme="sunlight"] .cat-pill.active {
+  background: #C2410C !important;
+  border-color: #C2410C !important;
+  color: #FFFFFF !important;
+}
+
+.places-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 6px;
+  overscroll-behavior: contain;
+}
+
+/* UI-Blended Custom Scrollbar for Places List */
+.places-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.places-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.places-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+.places-list::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-orange);
+}
+
+.place-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  transition: transform 0.15s, border-color 0.2s, background-color 0.2s;
+  cursor: pointer;
+}
+
+.place-card:hover {
+  border-color: var(--primary-orange);
+  background: var(--bg-card-hover);
+  transform: translateY(-1px);
+}
+
+.place-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+  display: block;
+}
+
+.place-dist {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: block;
+}
+
+.btn-add-place {
+  background: rgba(0, 229, 255, 0.15);
+  border: 1.5px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform 0.15s, background-color 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+
+.btn-add-place:hover {
+  background: var(--accent-cyan);
+  color: #000;
+  transform: scale(1.05);
+}
+
+.btn-add-place:disabled,
+.btn-add-place.added {
+  background: rgba(0, 230, 118, 0.15);
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+  cursor: default;
+  transform: none;
 }
 
 /* ====================================================================

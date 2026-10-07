@@ -393,18 +393,92 @@ function renderRoutePlannerWaypoints() {
 
   const waypoints = ride.waypoints || [];
   container.innerHTML = waypoints.map((wp, idx) => `
-    <div class="waypoint-item" data-id="${wp.id}">
-      <span class="drag-handle">☰</span>
+    <div class="waypoint-item" data-id="${wp.id}" data-index="${idx}" draggable="true">
+      <span class="drag-handle" title="Hold & drag to reorder stop">☰</span>
       <span class="wp-icon">${wp.icon || '📍'}</span>
       <div class="wp-details">
         <span class="wp-name">${wp.name}</span>
-        <span class="wp-type-badge ${wp.type}">${wp.type.toUpperCase()}</span>
+        <span class="wp-type-badge ${wp.type || 'stop'}">${wp.type ? wp.type.toUpperCase() : 'STOP'}</span>
       </div>
-      ${waypoints.length > 2 ? `<button class="btn-remove-stop" onclick="removeStop(${wp.id})">✕</button>` : ''}
+      <div class="wp-actions">
+        ${idx > 0 && idx < waypoints.length - 1 ? `
+          <button class="wp-order-btn" onclick="moveStop(${idx}, -1)" title="Move Up">▲</button>
+          <button class="wp-order-btn" onclick="moveStop(${idx}, 1)" title="Move Down">▼</button>
+        ` : ''}
+        ${waypoints.length > 2 ? `<button class="btn-remove-stop" onclick="removeStop(${wp.id})" title="Remove Stop">✕</button>` : ''}
+      </div>
     </div>
   `).join('');
 
+  attachWaypointDragAndDrop(container);
   calculateAndDisplayRouteStats(waypoints);
+}
+
+function attachWaypointDragAndDrop(container) {
+  let draggedIndex = null;
+  const items = container.querySelectorAll('.waypoint-item');
+
+  items.forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      draggedIndex = parseInt(item.getAttribute('data-index'));
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedIndex);
+      item.classList.add('is-dragging');
+    });
+
+    item.addEventListener('dragend', () => {
+      item.classList.remove('is-dragging');
+      items.forEach(el => el.classList.remove('drag-over-above', 'drag-over-below'));
+    });
+
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const targetIndex = parseInt(item.getAttribute('data-index'));
+      if (draggedIndex === null || draggedIndex === targetIndex) return;
+
+      items.forEach(el => el.classList.remove('drag-over-above', 'drag-over-below'));
+      if (targetIndex < draggedIndex) {
+        item.classList.add('drag-over-above');
+      } else {
+        item.classList.add('drag-over-below');
+      }
+    });
+
+    item.addEventListener('dragleave', () => {
+      item.classList.remove('drag-over-above', 'drag-over-below');
+    });
+
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetIndex = parseInt(item.getAttribute('data-index'));
+      if (draggedIndex !== null && draggedIndex !== targetIndex) {
+        reorderWaypoints(draggedIndex, targetIndex);
+      }
+    });
+  });
+}
+
+function reorderWaypoints(fromIdx, toIdx) {
+  if (!state.currentRide || !state.currentRide.waypoints) return;
+  const waypoints = state.currentRide.waypoints;
+  if (fromIdx < 0 || fromIdx >= waypoints.length || toIdx < 0 || toIdx >= waypoints.length) return;
+
+  const [movedItem] = waypoints.splice(fromIdx, 1);
+  waypoints.splice(toIdx, 0, movedItem);
+
+  RideSyncDB.saveWaypoints(state.currentRide.id, waypoints);
+  renderRoutePlannerWaypoints();
+  showToast(`🔄 Reordered: "${movedItem.name}" to stop #${toIdx + 1}`, 'success');
+}
+
+function moveStop(index, direction) {
+  const newIndex = index + direction;
+  if (!state.currentRide || !state.currentRide.waypoints) return;
+  const waypoints = state.currentRide.waypoints;
+  if (newIndex < 0 || newIndex >= waypoints.length) return;
+
+  reorderWaypoints(index, newIndex);
 }
 
 async function calculateAndDisplayRouteStats(waypoints) {
@@ -442,8 +516,8 @@ function promptAddCustomStop() {
       name: name.trim(),
       type: 'custom',
       icon: '📍',
-      lat: 11.0000 + (Math.random() * 1.5),
-      lng: 77.8000 + (Math.random() * 0.5),
+      lat: 10.2185 + (Math.random() * 0.05),
+      lng: 77.4682 + (Math.random() * 0.05),
       plannedDuration: 15
     };
     state.currentRide.waypoints.splice(state.currentRide.waypoints.length - 1, 0, newWp);
@@ -1512,49 +1586,92 @@ function handlePlaceSearchInput(query) {
       if (places.length === 0) {
         container.innerHTML = `<p style="padding:20px; text-align:center; color:var(--text-muted);">No locations found for "${query}".</p>`;
       } else {
-        container.innerHTML = places.map(p => `
-          <div class="place-card" onclick="addDiscoveredPlace('${escapeQuotes(p.name)}', ${p.lat}, ${p.lng})">
-            <div>
-              <span class="place-name">${p.name}</span>
-              <span class="place-dist">${p.subText}</span>
+        const existingNames = new Set((state.currentRide?.waypoints || []).map(w => w.name));
+        container.innerHTML = places.map(p => {
+          const isAdded = existingNames.has(p.name);
+          return `
+            <div class="place-card" onclick="${isAdded ? '' : `addDiscoveredPlace('${escapeQuotes(p.name)}', ${p.lat}, ${p.lng}, 'custom', '📍')`}">
+              <div>
+                <span class="place-name">${p.name}</span>
+                <span class="place-dist">${p.subText}</span>
+              </div>
+              <button class="btn-add-place ${isAdded ? 'added' : ''}" ${isAdded ? 'disabled' : ''}>
+                ${isAdded ? '✓ Added' : '+ Add'}
+              </button>
             </div>
-            <button class="btn-add-place">+ Add Stop</button>
-          </div>
-        `).join('');
+          `;
+        }).join('');
       }
     }
   }, 400);
 }
 
-function renderPlaceDiscoveryList() {
+function openDiscoveryModal() {
+  renderPlaceDiscoveryList();
+  openModal('modalPlaceDiscovery');
+}
+
+function filterPlaceCategory(btnEl, category) {
+  if (btnEl && btnEl.parentElement) {
+    btnEl.parentElement.querySelectorAll('.cat-pill').forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+  }
+  state.activeDiscoveryFilter = category;
+  renderPlaceDiscoveryList(category);
+}
+
+function renderPlaceDiscoveryList(filterCategory) {
   const container = document.getElementById('placesList');
   if (!container) return;
 
+  const category = filterCategory || state.activeDiscoveryFilter || 'all';
+
   const defaultPlaces = [
-    { name: 'Kodaikanal Lake & Boathouse', cat: 'Top Attractions', sub: 'Scenic halt · 1.2 km off route', lat: 10.2350, lng: 77.4900 },
-    { name: 'Coaker\'s Walk Valley View', cat: 'Viewpoints', sub: 'On route · Panoramic cliff', lat: 10.2324, lng: 77.4947 },
-    { name: 'Silver Cascade Waterfall', cat: 'Viewpoints', sub: 'On route · Photo Stop', lat: 10.2582, lng: 77.5186 },
-    { name: 'Highland Filter Tea & Spices', cat: 'Tea', sub: '0.3 km from route · Hot Chai', lat: 10.2450, lng: 77.5020 },
-    { name: 'Indian Oil Ghat Station', cat: 'Fuel', sub: 'On route · High altitude fuel', lat: 10.2600, lng: 77.5100 }
+    { name: 'Kodaikanal Lake & Boathouse', cat: 'Viewpoints', sub: 'Scenic halt · 1.2 km off route', type: 'photo', icon: '📸', lat: 10.2350, lng: 77.4900 },
+    { name: 'Coaker\'s Walk Valley View', cat: 'Viewpoints', sub: 'On route · Panoramic cliff', type: 'photo', icon: '📸', lat: 10.2324, lng: 77.4947 },
+    { name: 'Silver Cascade Waterfall', cat: 'Viewpoints', sub: 'On route · Photo Stop', type: 'photo', icon: '📸', lat: 10.2582, lng: 77.5186 },
+    { name: 'Pillar Rocks Viewpoint', cat: 'Viewpoints', sub: '1.4 km off route · 400ft Pillar Rocks', type: 'photo', icon: '📍', lat: 10.2185, lng: 77.4682 },
+    { name: 'Moir Point Valley Lookout', cat: 'Viewpoints', sub: 'On route · Valley & Ghat View', type: 'photo', icon: '📸', lat: 10.2150, lng: 77.4650 },
+    { name: 'Highland Filter Tea & Spices', cat: 'Tea', sub: '0.3 km from route · Hot Chai', type: 'tea', icon: '☕', lat: 10.2450, lng: 77.5020 },
+    { name: 'Hilltop Bakeries & Chai Halt', cat: 'Tea', sub: 'On route · Fresh Tea & Snacks', type: 'tea', icon: '☕', lat: 10.2380, lng: 77.4950 },
+    { name: 'Ghat Road Filter Coffee', cat: 'Tea', sub: '1.1 km off route · Hot Coffee', type: 'tea', icon: '☕', lat: 10.2410, lng: 77.4980 },
+    { name: 'Indian Oil Ghat Station', cat: 'Fuel', sub: 'On route · High altitude fuel', type: 'fuel', icon: '⛽', lat: 10.2600, lng: 77.5100 },
+    { name: 'HP Fuel & Air Pump', cat: 'Fuel', sub: '0.5 km from route · 24/7 petrol & air', type: 'fuel', icon: '⛽', lat: 10.2500, lng: 77.5050 },
+    { name: 'Bharat Petroleum Eco Station', cat: 'Fuel', sub: 'On route · EV Fast Charger & Fuel', type: 'fuel', icon: '⛽', lat: 10.2280, lng: 77.4850 },
+    { name: 'Cloud 9 Highway Diner', cat: 'Food', sub: 'On route · South Indian Tiffin', type: 'food', icon: '🍴', lat: 10.2520, lng: 77.5080 },
+    { name: 'Kodaikanal Valley Restaurant', cat: 'Food', sub: '0.8 km off route · Full Meals', type: 'food', icon: '🍴', lat: 10.2310, lng: 77.4910 },
+    { name: 'Pine Forest Food Court', cat: 'Food', sub: 'On route · Quick Snacks & Maggi', type: 'food', icon: '🍴', lat: 10.2220, lng: 77.4720 }
   ];
 
-  container.innerHTML = defaultPlaces.map(p => `
-    <div class="place-card" onclick="addDiscoveredPlace('${escapeQuotes(p.name)}', ${p.lat}, ${p.lng})">
-      <div>
-        <span class="place-name">${p.name}</span>
-        <span class="place-dist">${p.sub}</span>
+  const filtered = category === 'all'
+    ? defaultPlaces
+    : defaultPlaces.filter(p => p.cat === category || (category === 'Viewpoints' && p.cat === 'Top Attractions'));
+
+  const existingNames = new Set((state.currentRide?.waypoints || []).map(w => w.name));
+
+  container.innerHTML = filtered.map(p => {
+    const isAdded = existingNames.has(p.name);
+    return `
+      <div class="place-card" onclick="${isAdded ? '' : `addDiscoveredPlace('${escapeQuotes(p.name)}', ${p.lat}, ${p.lng}, '${p.type}', '${p.icon}')`}">
+        <div>
+          <span class="place-name">${p.name}</span>
+          <span class="place-dist">${p.sub}</span>
+        </div>
+        <button class="btn-add-place ${isAdded ? 'added' : ''}" ${isAdded ? 'disabled' : ''}>
+          ${isAdded ? '✓ Added' : '+ Add'}
+        </button>
       </div>
-      <button class="btn-add-place">+ Add</button>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
-function addDiscoveredPlace(name, lat, lng) {
+function addDiscoveredPlace(name, lat, lng, type, icon) {
+  if (!state.currentRide) return;
   const newWp = {
     id: Date.now(),
     name,
-    type: 'photo',
-    icon: '📸',
+    type: type || 'photo',
+    icon: icon || '📍',
     lat,
     lng,
     plannedDuration: 20
@@ -1562,7 +1679,7 @@ function addDiscoveredPlace(name, lat, lng) {
   state.currentRide.waypoints.splice(state.currentRide.waypoints.length - 1, 0, newWp);
   RideSyncDB.saveWaypoints(state.currentRide.id, state.currentRide.waypoints);
   renderRoutePlannerWaypoints();
-  closeModal('modalPlaceDiscovery');
+  renderPlaceDiscoveryList();
   showToast(`✅ Added "${name}" to route!`, 'success');
 }
 
