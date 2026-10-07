@@ -513,6 +513,62 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  // Profile Output Formatter (provides both camelCase and snake_case properties)
+  function formatProfileOutput(p) {
+    if (!p) return null;
+    return {
+      ...p,
+      id: p.id,
+      name: p.name,
+      username: p.username,
+      phone: p.phone,
+      phoneFormatted: p.phone_formatted || p.phone,
+      phone_formatted: p.phone_formatted || p.phone,
+      avatar: p.avatar,
+      avatarColor: p.avatar_color || '#FF6B00',
+      avatar_color: p.avatar_color || '#FF6B00',
+      bikeModel: p.bike_model || 'Motorcycle',
+      bike_model: p.bike_model || 'Motorcycle',
+      bloodGroup: p.blood_group || 'O+ve',
+      blood_group: p.blood_group || 'O+ve',
+      emergencyContactName: p.emergency_contact_name || '',
+      emergency_contact_name: p.emergency_contact_name || '',
+      emergencyContactPhone: p.emergency_contact_phone || '',
+      emergency_contact_phone: p.emergency_contact_phone || '',
+      ridesCount: p.rides_count || 0,
+      rides_count: p.rides_count || 0,
+      totalKm: p.total_km || 0,
+      total_km: p.total_km || 0,
+      roleDefault: p.role_default || 'Rider',
+      role_default: p.role_default || 'Rider',
+      createdAt: p.created_at,
+      updatedAt: p.updated_at
+    };
+  }
+
+  // Robust Phone Matcher (matches exact, stripped spaces, or last 10 digits)
+  function findProfileByPhone(inputPhone) {
+    if (!inputPhone) return null;
+    const cleanPhone = String(inputPhone).replace(/[\s-]/g, '');
+    const digits = String(inputPhone).replace(/\D/g, '');
+    const last10 = digits.slice(-10);
+
+    // 1. Direct query
+    let row = db.prepare('SELECT * FROM profiles WHERE phone = ? OR phone_formatted = ?').get(cleanPhone, inputPhone);
+    if (row) return row;
+
+    // 2. Scan all if digits match last 10
+    if (last10.length >= 10) {
+      const all = db.prepare('SELECT * FROM profiles').all();
+      row = all.find(p => {
+        const pDigits = String(p.phone || '').replace(/\D/g, '');
+        const pFormattedDigits = String(p.phone_formatted || '').replace(/\D/g, '');
+        return pDigits.endsWith(last10) || pFormattedDigits.endsWith(last10);
+      });
+    }
+    return row || null;
+  }
+
   // Request Phone OTP
   if (pathname === '/api/auth/request-otp' && req.method === 'POST') {
     getJsonBody((err, body) => {
@@ -528,7 +584,7 @@ const server = http.createServer((req, res) => {
         ON CONFLICT(phone) DO UPDATE SET otp_code = excluded.otp_code, expires_at = excluded.expires_at
       `).run(phone, otp, expiresAt);
 
-      const existingProfile = db.prepare('SELECT * FROM profiles WHERE phone = ?').get(phone);
+      const existingProfile = findProfileByPhone(phone);
 
       sendJson(200, {
         success: true,
@@ -536,7 +592,7 @@ const server = http.createServer((req, res) => {
         phone,
         otpCode: otp, // Returned for simulated SMS banner
         isExistingUser: !!existingProfile,
-        profile: existingProfile || null
+        profile: formatProfileOutput(existingProfile)
       });
     });
     return;
@@ -545,18 +601,27 @@ const server = http.createServer((req, res) => {
   // Verify Phone OTP
   if (pathname === '/api/auth/verify-otp' && req.method === 'POST') {
     getJsonBody((err, body) => {
-      const phone = (body.phone || '').replace(/[\s-]/g, '');
+      const rawPhone = body.phone || '';
+      const phone = rawPhone.replace(/[\s-]/g, '');
       const otp = body.otp;
 
-      const record = db.prepare('SELECT * FROM otp_verifications WHERE phone = ?').get(phone);
-      if (!record) return sendJson(400, { error: 'No OTP request found for this phone' });
+      // Check OTP in DB or allow demo '123456'
+      let record = db.prepare('SELECT * FROM otp_verifications WHERE phone = ?').get(phone);
+      if (!record && rawPhone !== phone) {
+        record = db.prepare('SELECT * FROM otp_verifications WHERE phone = ?').get(rawPhone);
+      }
 
-      if (record.otp_code === otp || otp === '123456') {
-        const profile = db.prepare('SELECT * FROM profiles WHERE phone = ?').get(phone);
+      const isValidOtp = (record && record.otp_code === otp) || otp === '123456';
+      if (!isValidOtp && !record) {
+        return sendJson(400, { error: 'No OTP request found for this phone' });
+      }
+
+      if (isValidOtp) {
+        const profile = findProfileByPhone(rawPhone);
         sendJson(200, {
           success: true,
           isNewUser: !profile,
-          profile: profile || null
+          profile: formatProfileOutput(profile)
         });
       } else {
         sendJson(400, { error: 'Incorrect OTP code' });
@@ -568,45 +633,68 @@ const server = http.createServer((req, res) => {
   // Get Profiles
   if (pathname === '/api/profiles' && req.method === 'GET') {
     const profiles = db.prepare('SELECT * FROM profiles ORDER BY created_at ASC').all();
-    return sendJson(200, profiles);
+    return sendJson(200, profiles.map(formatProfileOutput));
   }
 
   // Create or Update Profile
   if (pathname === '/api/profiles' && req.method === 'POST') {
     getJsonBody((err, body) => {
       if (err) return sendJson(400, { error: 'Invalid JSON' });
-      const id = body.id || 'usr-' + Date.now();
       const cleanPhone = (body.phone || '').replace(/[\s-]/g, '');
+      const existingByPhone = findProfileByPhone(body.phone || body.phoneFormatted);
+      const existingById = body.id ? db.prepare('SELECT * FROM profiles WHERE id = ?').get(body.id) : null;
+      const targetProfile = existingByPhone || existingById;
 
-      db.prepare(`
-        INSERT INTO profiles (id, name, username, phone, phone_formatted, avatar, avatar_color, bike_model, blood_group, emergency_contact_name, emergency_contact_phone, rides_count, total_km, role_default)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          bike_model = excluded.bike_model,
-          blood_group = excluded.blood_group,
-          emergency_contact_name = excluded.emergency_contact_name,
-          emergency_contact_phone = excluded.emergency_contact_phone,
-          updated_at = datetime('now')
-      `).run(
-        id,
-        body.name || 'Rider',
-        body.username || 'rider_' + Date.now(),
-        cleanPhone,
-        body.phoneFormatted || body.phone,
-        body.avatar || (body.name || 'R')[0],
-        body.avatarColor || '#FF6B00',
-        body.bikeModel || 'Motorcycle',
-        body.bloodGroup || 'O+ve',
-        body.emergencyContactName || '',
-        body.emergencyContactPhone || '',
-        body.ridesCount || 0,
-        body.totalKm || 0,
-        body.roleDefault || 'Rider'
-      );
+      const id = targetProfile ? targetProfile.id : (body.id || 'usr-' + Date.now());
+
+      if (targetProfile) {
+        db.prepare(`
+          UPDATE profiles SET
+            name = COALESCE(?, name),
+            bike_model = COALESCE(?, bike_model),
+            blood_group = COALESCE(?, blood_group),
+            emergency_contact_name = COALESCE(?, emergency_contact_name),
+            emergency_contact_phone = COALESCE(?, emergency_contact_phone),
+            avatar = COALESCE(?, avatar),
+            avatar_color = COALESCE(?, avatar_color),
+            phone_formatted = COALESCE(?, phone_formatted),
+            updated_at = datetime('now')
+          WHERE id = ?
+        `).run(
+          body.name,
+          body.bikeModel || body.bike_model,
+          body.bloodGroup || body.blood_group,
+          body.emergencyContactName || body.emergency_contact_name,
+          body.emergencyContactPhone || body.emergency_contact_phone,
+          body.avatar,
+          body.avatarColor || body.avatar_color,
+          body.phoneFormatted || body.phone_formatted || body.phone,
+          id
+        );
+      } else {
+        db.prepare(`
+          INSERT INTO profiles (id, name, username, phone, phone_formatted, avatar, avatar_color, bike_model, blood_group, emergency_contact_name, emergency_contact_phone, rides_count, total_km, role_default)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          id,
+          body.name || 'Rider',
+          body.username || 'rider_' + Date.now(),
+          cleanPhone,
+          body.phoneFormatted || body.phone,
+          body.avatar || (body.name || 'R')[0],
+          body.avatarColor || body.avatar_color || '#FF6B00',
+          body.bikeModel || body.bike_model || 'Motorcycle',
+          body.bloodGroup || body.blood_group || 'O+ve',
+          body.emergencyContactName || body.emergency_contact_name || '',
+          body.emergencyContactPhone || body.emergency_contact_phone || '',
+          body.ridesCount || body.rides_count || 0,
+          body.totalKm || body.total_km || 0,
+          body.roleDefault || body.role_default || 'Rider'
+        );
+      }
 
       const updated = db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
-      sendJson(200, { success: true, profile: updated });
+      sendJson(200, { success: true, profile: formatProfileOutput(updated) });
     });
     return;
   }
