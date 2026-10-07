@@ -18,9 +18,16 @@ const RideSyncAuth = (function () {
 
   function checkSession() {
     const activeUserId = RideSyncDB.getActiveUserId();
+    if (!activeUserId) {
+      showAuthScreen();
+      return;
+    }
     const user = RideSyncDB.getProfile(activeUserId);
     if (user) {
       updateUserHeaderUi(user);
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      const homeScreen = document.getElementById('screenHome');
+      if (homeScreen) homeScreen.classList.add('active');
     } else {
       showAuthScreen();
     }
@@ -246,8 +253,10 @@ const RideSyncAuth = (function () {
   }
 
   function completeLogin(user) {
+    if (!user) return;
     RideSyncDB.setActiveUserId(user.id);
     updateUserHeaderUi(user);
+    resetOtpState();
 
     // Navigate to Home screen
     if (typeof navigateTo === 'function') {

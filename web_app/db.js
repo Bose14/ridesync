@@ -92,7 +92,7 @@ const RideSyncDB = (function () {
   // Sync state directly from live backend server on load
   async function syncFromServer() {
     try {
-      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3500) });
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4500) });
       if (res.ok) {
         isServerConnected = true;
         console.log(`[RideSync] Live Backend Connected: ${API_BASE}`);
@@ -103,21 +103,52 @@ const RideSyncDB = (function () {
           fetch(`${API_BASE}/rides`).then(r => r.json()).catch(() => [])
         ]);
 
-        const normalizedProfiles = Array.isArray(profilesRes) ? profilesRes.map(normalizeProfile) : [];
+        const serverProfiles = Array.isArray(profilesRes) ? profilesRes.map(normalizeProfile) : [];
+        const serverRides = Array.isArray(ridesRes) ? ridesRes : [];
 
-        const db = {
-          profiles: normalizedProfiles,
-          rides: Array.isArray(ridesRes) ? ridesRes : []
+        const localDb = loadDb();
+
+        // Bidirectional merge profiles: keep local profiles and sync missing ones to server
+        const mergedProfiles = [...serverProfiles];
+        (localDb.profiles || []).forEach(localP => {
+          const idx = mergedProfiles.findIndex(sp => sp.id === localP.id || matchPhone(sp.phone, localP.phone));
+          if (idx >= 0) {
+            mergedProfiles[idx] = normalizeProfile({ ...localP, ...mergedProfiles[idx] });
+          } else {
+            mergedProfiles.push(localP);
+            // Push offline/local profile to server
+            fetch(`${API_BASE}/profiles`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(localP)
+            }).catch(() => {});
+          }
+        });
+
+        // Merge rides
+        const mergedRides = [...serverRides];
+        (localDb.rides || []).forEach(localR => {
+          if (!mergedRides.some(sr => sr.id === localR.id)) {
+            mergedRides.push(localR);
+          }
+        });
+
+        const newDb = {
+          profiles: mergedProfiles,
+          rides: mergedRides
         };
 
-        saveDb(db);
+        saveDb(newDb);
 
-        // If currently logged-in user no longer exists in DB, force logout to Auth Screen
+        // Keep active session user intact across reloads
         const activeId = localStorage.getItem(SESSION_KEY);
-        if (activeId && !db.profiles.some(p => p.id === activeId || matchPhone(p.phone, activeId))) {
-          localStorage.removeItem(SESSION_KEY);
-          if (typeof RideSyncAuth !== 'undefined' && RideSyncAuth.showAuthScreen) {
-            RideSyncAuth.showAuthScreen();
+        if (activeId) {
+          const activeUser = mergedProfiles.find(p => p.id === activeId || matchPhone(p.phone, activeId));
+          if (activeUser) {
+            localStorage.setItem(SESSION_KEY, activeUser.id);
+            if (typeof updateUserHeaderUi === 'function') {
+              updateUserHeaderUi(activeUser);
+            }
           }
         }
 
@@ -125,10 +156,10 @@ const RideSyncDB = (function () {
           reloadDynamicAppData();
         }
 
-        return db;
+        return newDb;
       }
     } catch (e) {
-      console.warn('[RideSync] Live backend unreachable, operating in local clean storage mode:', e.message);
+      console.warn('[RideSync] Live backend unreachable, operating in local storage mode:', e.message);
       isServerConnected = false;
     }
     return null;
