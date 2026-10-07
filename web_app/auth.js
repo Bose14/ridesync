@@ -174,6 +174,9 @@ const RideSyncAuth = (function () {
       return;
     }
 
+    let serverProfile = null;
+    let isBackendSuccess = false;
+
     try {
       const apiUrl = typeof RideSyncDB !== 'undefined' && RideSyncDB.getApiBaseUrl ? RideSyncDB.getApiBaseUrl() : 'https://ridesync-yibf.onrender.com/api';
       const res = await fetch(`${apiUrl}/auth/verify-otp`, {
@@ -182,18 +185,26 @@ const RideSyncAuth = (function () {
         body: JSON.stringify({ phone: pendingPhone, otp: enteredOtp })
       });
       const data = await res.json();
-      if (!res.ok) {
+      if (res.ok && data.success) {
+        isBackendSuccess = true;
+        if (data.profile) {
+          serverProfile = RideSyncDB.normalizeProfile(data.profile);
+          RideSyncDB.saveProfile(serverProfile);
+        }
+      } else if (!res.ok && enteredOtp !== generatedOtp && enteredOtp !== '123456') {
         showToast(`❌ ${data.error || 'Incorrect OTP'}`, 'error');
         return;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[RideSync Auth] Server verify-otp error/offline:', e);
+    }
 
-    // Accept generated OTP or fallback demo OTP '123456'
-    if (enteredOtp === generatedOtp || enteredOtp === '123456') {
+    // Accept server validation, generated OTP, or fallback demo OTP '123456'
+    if (isBackendSuccess || enteredOtp === generatedOtp || enteredOtp === '123456') {
       showToast('🔐 OTP Verified Successfully!', 'success');
 
-      // Check if user already exists in DB
-      let user = RideSyncDB.getProfileByPhone(pendingPhone);
+      // Check if user already exists in DB (server profile or local storage profile by phone)
+      let user = serverProfile || RideSyncDB.getProfileByPhone(pendingPhone);
       if (user) {
         completeLogin(user);
       } else {

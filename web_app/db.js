@@ -26,44 +26,126 @@ const RideSyncDB = (function () {
   }
 
   const API_BASE = resolveApiBase();
-  const DB_KEY = 'ridesync_db_v2';
+  const DB_KEY = 'ridesync_db_v3_clean';
   const SESSION_KEY = 'ridesync_active_user_id';
   const MAP_CONFIG_KEY = 'ridesync_map_config';
 
   let isServerConnected = false;
 
-  // Check connection to local database server on startup
-  async function checkServerHealth() {
+  // Clean Sandbox Baseline (0 test accounts, 0 test rides)
+  const defaultDatabase = {
+    profiles: [],
+    rides: []
+  };
+
+  function cleanDigits(phone) {
+    if (!phone) return '';
+    return String(phone).replace(/\D/g, '');
+  }
+
+  function matchPhone(p1, p2) {
+    if (!p1 || !p2) return false;
+    const clean1 = String(p1).replace(/[\s-]/g, '');
+    const clean2 = String(p2).replace(/[\s-]/g, '');
+    if (clean1 === clean2) return true;
+    const d1 = cleanDigits(p1);
+    const d2 = cleanDigits(p2);
+    if (d1 && d2 && d1 === d2) return true;
+    if (d1.length >= 10 && d2.length >= 10 && d1.slice(-10) === d2.slice(-10)) return true;
+    return false;
+  }
+
+  function normalizeProfile(p) {
+    if (!p) return null;
+    const name = p.name || 'Rider';
+    const cleanPhone = (p.phone || '').replace(/[\s-]/g, '');
+    const phoneFormatted = p.phoneFormatted || p.phone_formatted || p.phone || '';
+    return {
+      ...p,
+      id: p.id,
+      name,
+      username: p.username || (name.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Math.floor(100 + Math.random() * 900)),
+      phone: cleanPhone,
+      phoneFormatted: phoneFormatted,
+      phone_formatted: phoneFormatted,
+      avatar: p.avatar || name[0].toUpperCase(),
+      avatarColor: p.avatarColor || p.avatar_color || '#FF6B00',
+      avatar_color: p.avatarColor || p.avatar_color || '#FF6B00',
+      bikeModel: p.bikeModel || p.bike_model || 'Motorcycle',
+      bike_model: p.bikeModel || p.bike_model || 'Motorcycle',
+      bloodGroup: p.bloodGroup || p.blood_group || 'O+ve',
+      blood_group: p.bloodGroup || p.blood_group || 'O+ve',
+      emergencyContactName: p.emergencyContactName || p.emergency_contact_name || '',
+      emergency_contact_name: p.emergencyContactName || p.emergency_contact_name || '',
+      emergencyContactPhone: p.emergencyContactPhone || p.emergency_contact_phone || '',
+      emergency_contact_phone: p.emergencyContactPhone || p.emergency_contact_phone || '',
+      ridesCount: p.ridesCount !== undefined ? p.ridesCount : (p.rides_count !== undefined ? p.rides_count : 0),
+      rides_count: p.rides_count !== undefined ? p.rides_count : (p.ridesCount !== undefined ? p.ridesCount : 0),
+      totalKm: p.totalKm !== undefined ? p.totalKm : (p.total_km !== undefined ? p.total_km : 0),
+      total_km: p.total_km !== undefined ? p.total_km : (p.totalKm !== undefined ? p.totalKm : 0),
+      roleDefault: p.roleDefault || p.role_default || 'Rider',
+      role_default: p.roleDefault || p.role_default || 'Rider',
+      createdAt: p.createdAt || p.created_at || new Date().toISOString()
+    };
+  }
+
+  // Sync state directly from live backend server on load
+  async function syncFromServer() {
     try {
-      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(1500) });
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
-        const data = await res.json();
         isServerConnected = true;
-        console.log('[RideSync] Connected to Local SQLite DB Server (ridesync.db):', data);
-        return data;
+        console.log(`[RideSync] Live Backend Connected: ${API_BASE}`);
+
+        // Fetch live profiles & rides from backend
+        const [profilesRes, ridesRes] = await Promise.all([
+          fetch(`${API_BASE}/profiles`).then(r => r.json()).catch(() => []),
+          fetch(`${API_BASE}/rides`).then(r => r.json()).catch(() => [])
+        ]);
+
+        const normalizedProfiles = Array.isArray(profilesRes) ? profilesRes.map(normalizeProfile) : [];
+
+        const db = {
+          profiles: normalizedProfiles,
+          rides: Array.isArray(ridesRes) ? ridesRes : []
+        };
+
+        saveDb(db);
+
+        // If currently logged-in user no longer exists in DB, force logout to Auth Screen
+        const activeId = localStorage.getItem(SESSION_KEY);
+        if (activeId && !db.profiles.some(p => p.id === activeId || matchPhone(p.phone, activeId))) {
+          localStorage.removeItem(SESSION_KEY);
+          if (typeof RideSyncAuth !== 'undefined' && RideSyncAuth.showAuthScreen) {
+            RideSyncAuth.showAuthScreen();
+          }
+        }
+
+        if (typeof reloadDynamicAppData === 'function') {
+          reloadDynamicAppData();
+        }
+
+        return db;
       }
     } catch (e) {
-      console.warn('[RideSync] Local server offline, using local storage database mode.');
+      console.warn('[RideSync] Live backend unreachable, operating in local clean storage mode:', e.message);
       isServerConnected = false;
     }
     return null;
   }
 
-  // Initial health check
-  checkServerHealth();
-
-  // Clean Sandbox Storage Baseline
-  const defaultDatabase = {
-    profiles: [],
-    rides: []
-  };
+  // Initial sync from server
+  syncFromServer();
 
   function loadDb() {
     try {
       const stored = localStorage.getItem(DB_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.profiles) && Array.isArray(parsed.rides)) return parsed;
+        if (Array.isArray(parsed.profiles) && Array.isArray(parsed.rides)) {
+          parsed.profiles = parsed.profiles.map(normalizeProfile);
+          return parsed;
+        }
       }
     } catch (e) {}
     saveDb(defaultDatabase);
@@ -94,6 +176,10 @@ const RideSyncDB = (function () {
     } catch (e) {}
   }
 
+  function checkServerHealth() {
+    return syncFromServer();
+  }
+
   return {
     getApiBaseUrl() {
       return API_BASE;
@@ -102,6 +188,8 @@ const RideSyncDB = (function () {
       return isServerConnected;
     },
     checkServerHealth,
+    normalizeProfile,
+    matchPhone,
 
     // Run Raw SQL query on Local Database Server
     async executeSql(sql) {
@@ -119,7 +207,7 @@ const RideSyncDB = (function () {
 
     // Session
     getActiveUserId() {
-      return localStorage.getItem(SESSION_KEY) || 'usr-bose';
+      return localStorage.getItem(SESSION_KEY) || '';
     },
     setActiveUserId(userId) {
       localStorage.setItem(SESSION_KEY, userId);
@@ -129,33 +217,37 @@ const RideSyncDB = (function () {
     },
     getActiveUser() {
       const id = this.getActiveUserId();
-      return this.getProfile(id) || this.getProfiles()[0];
+      return this.getProfile(id) || this.getProfiles()[0] || null;
     },
 
     // Profiles
     getProfiles() {
       const db = loadDb();
-      return db.profiles || [];
+      return (db.profiles || []).map(normalizeProfile);
     },
     getProfile(id) {
+      if (!id) return null;
       const db = loadDb();
-      return db.profiles.find(p => p.id === id || p.phone === id);
+      const match = (db.profiles || []).find(p => p.id === id || matchPhone(p.phone, id) || matchPhone(p.phoneFormatted, id));
+      return match ? normalizeProfile(match) : null;
     },
     getProfileByPhone(phone) {
+      if (!phone) return null;
       const db = loadDb();
-      const cleanPhone = phone.replace(/[\s-]/g, '');
-      return db.profiles.find(p => p.phone.replace(/[\s-]/g, '') === cleanPhone);
+      const match = (db.profiles || []).find(p => matchPhone(p.phone, phone) || matchPhone(p.phoneFormatted, phone));
+      return match ? normalizeProfile(match) : null;
     },
     async saveProfile(profileData) {
+      const normalized = normalizeProfile(profileData);
       const db = loadDb();
-      const idx = db.profiles.findIndex(p => p.id === profileData.id);
+      const idx = db.profiles.findIndex(p => p.id === normalized.id || matchPhone(p.phone, normalized.phone));
       if (idx >= 0) {
-        db.profiles[idx] = { ...db.profiles[idx], ...profileData, updatedAt: new Date().toISOString() };
+        db.profiles[idx] = { ...db.profiles[idx], ...normalized, updatedAt: new Date().toISOString() };
       } else {
         db.profiles.push({
-          id: profileData.id || 'usr-' + Date.now(),
-          createdAt: new Date().toISOString(),
-          ...profileData
+          ...normalized,
+          id: normalized.id || 'usr-' + Date.now(),
+          createdAt: new Date().toISOString()
         });
       }
       saveDb(db);
@@ -165,18 +257,36 @@ const RideSyncDB = (function () {
         fetch(`${API_BASE}/profiles`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(profileData)
+          body: JSON.stringify(normalized)
         }).catch(() => {});
       } catch (e) {}
 
-      return profileData;
+      return normalized;
     },
 
     createRiderAccount(data) {
+      const existing = this.getProfileByPhone(data.phone);
+      if (existing) {
+        const updated = {
+          ...existing,
+          name: data.name || existing.name,
+          bikeModel: data.bikeModel || existing.bikeModel,
+          bike_model: data.bikeModel || existing.bikeModel,
+          bloodGroup: data.bloodGroup || existing.bloodGroup,
+          blood_group: data.bloodGroup || existing.bloodGroup,
+          emergencyContactName: data.emergencyContactName || existing.emergencyContactName,
+          emergency_contact_name: data.emergencyContactName || existing.emergencyContactName,
+          emergencyContactPhone: data.emergencyContactPhone || existing.emergencyContactPhone,
+          emergency_contact_phone: data.emergencyContactPhone || existing.emergencyContactPhone
+        };
+        this.saveProfile(updated);
+        return updated;
+      }
+
       const db = loadDb();
-      const cleanPhone = data.phone.replace(/[\s-]/g, '');
+      const cleanPhone = (data.phone || '').replace(/[\s-]/g, '');
       const id = 'usr-' + Date.now();
-      const newProfile = {
+      const newProfile = normalizeProfile({
         id,
         name: data.name || 'Rider',
         phone: cleanPhone,
@@ -192,11 +302,11 @@ const RideSyncDB = (function () {
         totalKm: 0,
         roleDefault: 'Rider',
         createdAt: new Date().toISOString()
-      };
+      });
       db.profiles.push(newProfile);
       saveDb(db);
 
-      // Sync with local server
+      // Sync with server
       try {
         fetch(`${API_BASE}/profiles`, {
           method: 'POST',
