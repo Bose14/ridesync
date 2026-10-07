@@ -21,14 +21,8 @@
     <!-- Mobile Screen Container -->
     <div class="mobile-frame" id="mobileFrame">
       
-      <!-- Top Status Bar (Simulated Mobile Header) -->
-      <header class="mobile-status-bar">
-        <span class="status-time" id="statusClock">05:30</span>
-        <div class="status-indicators">
-          <span class="signal-icon">⚡ Payanam DB</span>
-          <span class="battery-icon" id="headerBattery">🔋 92%</span>
-        </div>
-      </header>
+
+
 
       <!-- Main Screens Container -->
       <main class="app-screens">
@@ -220,9 +214,18 @@
               <p class="greeting-sub">Good morning, Rider</p>
               <h1 class="user-greeting">Bose 👋</h1>
             </div>
-            <div class="profile-badge-btn" onclick="openProfileModal()">
-              <div class="avatar-ring">
-                <span class="avatar-initial">B</span>
+            <div class="header-right-actions">
+              <button class="theme-switch-dongle" id="themeToggleBtn" onclick="toggleCockpitTheme()" title="Switch Sunlight Day / OLED Night Cockpit Mode">
+                <span class="dongle-track">
+                  <span class="dongle-icon icon-sun">☀️</span>
+                  <span class="dongle-icon icon-moon">🌙</span>
+                  <span class="dongle-knob" id="themeDongleKnob"></span>
+                </span>
+              </button>
+              <div class="profile-badge-btn" onclick="openProfileModal()">
+                <div class="avatar-ring">
+                  <span class="avatar-initial">B</span>
+                </div>
               </div>
             </div>
           </div>
@@ -397,6 +400,9 @@
               </div>
             </div>
             <div class="live-header-actions">
+              <button class="btn-icon-map" id="mapThemeToggleBtn" title="Toggle Sunlight Day / Night Mode" onclick="toggleCockpitTheme()">
+                <span id="mapThemeIcon">☀️</span>
+              </button>
               <button class="btn-icon-map" title="Toggle Simulation" onclick="toggleTelemetrySim()">
                 <span id="simBtnIcon">⏸️</span>
               </button>

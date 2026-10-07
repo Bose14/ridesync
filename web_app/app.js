@@ -20,7 +20,8 @@ const state = {
   isSimRunning: true,
   simInterval: null,
   isSheetExpanded: false,
-  unreadMessagesCount: 0
+  unreadMessagesCount: 0,
+  themeMode: 'night'
 };
 
 // Simulation Rider Dynamics Data
@@ -30,12 +31,44 @@ const simLeaderBase = { lat: 10.2380, lng: 77.4890, speed: 68.4, heading: 145 };
 // App Initialization
 document.addEventListener('DOMContentLoaded', () => {
   initAppClock();
+  initThemeEngine();
   RideSyncAuth.init();
   loadCurrentRideFromDb();
   renderHomeScreen();
   renderHistoryScreen();
   renderSidePanelAccounts();
 });
+
+function initThemeEngine() {
+  const saved = localStorage.getItem('ridesync_theme_mode') || 'night';
+  applyTheme(saved);
+}
+
+function toggleCockpitTheme() {
+  const nextMode = state.themeMode === 'night' ? 'sunlight' : 'night';
+  applyTheme(nextMode);
+  showToast(nextMode === 'sunlight' ? '☀️ Switched to High-Contrast Sunlight Day Mode' : '🌙 Switched to OLED Tactical Night Mode', 'info');
+}
+
+function applyTheme(mode) {
+  state.themeMode = mode;
+  localStorage.setItem('ridesync_theme_mode', mode);
+
+  document.documentElement.setAttribute('data-theme', mode);
+  document.body.classList.remove('dark-theme', 'sunlight-theme', 'night-theme');
+  document.body.classList.add(mode + '-theme');
+
+  const mapIconEl = document.getElementById('mapThemeIcon');
+  if (mapIconEl) {
+    mapIconEl.innerText = mode === 'sunlight' ? '☀️' : '🌙';
+  }
+
+  // Automatically adapt Leaflet Map tile provider for max readability
+  if (state.map && window.RideSyncMaps) {
+    const mapProvider = mode === 'sunlight' ? 'osm-standard' : 'carto-dark';
+    RideSyncMaps.attachTileLayer(state.map, mapProvider);
+  }
+}
 
 function initAppClock() {
   const updateTime = () => {
@@ -511,43 +544,86 @@ function renderRiderMarkers() {
 function renderRiderTelemetryCards() {
   const container = document.getElementById('riderCardsContainer');
   const titleEl = document.getElementById('bottomSheetTitle');
-  if (titleEl) titleEl.innerText = `Group Telemetry (${state.riders.length} Riders)`;
+  
+  const hasSeparation = state.riders.some(r => r.isSeparated);
+  const activeCount = state.riders.filter(r => r.status === 'riding').length;
+
+  if (titleEl) {
+    titleEl.innerText = `Group Telemetry (${state.riders.length} Riders • ${activeCount} Riding)`;
+  }
 
   if (!container) return;
 
-  container.innerHTML = state.riders.map(rider => `
-    <div class="rider-card ${rider.isSeparated ? 'has-alert' : ''}">
-      <div class="rider-top-row">
-        <div class="rider-identity">
-          <div class="avatar-ring is-ready" style="border-color:${rider.avatarColor}; width:32px; height:32px; font-size:13px;">
-            <span>${rider.avatar}</span>
-          </div>
-          <div>
-            <span class="card-name">${rider.name} ${rider.isMe ? '(You)' : ''} ${rider.isLead ? '👑' : ''}</span>
-            <span class="card-bike">${rider.bike}</span>
-          </div>
-        </div>
-        <div class="rider-battery">
-          <span>🔋 ${rider.battery}%</span>
-        </div>
-      </div>
+  const dbProfiles = RideSyncDB.getProfiles();
 
-      <div class="telemetry-grid">
-        <div class="t-cell">
-          <span class="t-val">${rider.speed.toFixed(1)}</span>
-          <span class="t-lbl">km/h</span>
+  container.innerHTML = state.riders.map(rider => {
+    const profile = dbProfiles.find(p => p.id === rider.id || p.name === rider.name) || {};
+    const roleBadge = rider.isLead ? '👑 Lead' : (rider.role === 'admin' || rider.role === 'Sweeper') ? '🛡️ Sweeper' : '🏍️ Rider';
+    const isStopped = rider.status === 'stopped';
+    const isEmergency = rider.isSeparated || rider.status === 'emergency';
+
+    return `
+      <div class="telemetry-rider-card ${isEmergency ? 'is-emergency' : isStopped ? 'is-stopped' : ''}" onclick="centerMapOnRider('${rider.id}', ${rider.lat}, ${rider.lng})">
+        <div class="telemetry-card-top">
+          <div class="rider-avatar-block">
+            <div class="avatar-ring ${isEmergency ? 'is-not-ready' : 'is-ready'}" style="border-color:${rider.avatarColor}; width:38px; height:38px; font-size:14px; font-weight:800;">
+              <span>${rider.avatar}</span>
+            </div>
+            <div class="rider-name-block">
+              <div class="rider-title-line">
+                <span class="t-rider-name">${rider.name} ${rider.isMe ? '<strong style="color:var(--primary-orange);">(You)</strong>' : ''}</span>
+                <span class="role-tag-pill ${rider.isLead ? 'lead' : ''}">${roleBadge}</span>
+              </div>
+              <span class="t-rider-bike">${rider.bike} • <span style="color:var(--text-muted);">${profile.bloodGroup || 'O+ve'}</span></span>
+            </div>
+          </div>
+
+          <div class="telemetry-top-right">
+            <span class="t-battery-badge">🔋 ${rider.battery}%</span>
+            <span class="t-status-badge ${isEmergency ? 'danger' : isStopped ? 'warning' : 'success'}">
+              <span class="status-pulse-dot"></span> ${isEmergency ? 'SOS ALERT' : isStopped ? 'STOPPED' : 'RIDING'}
+            </span>
+          </div>
         </div>
-        <div class="t-cell">
-          <span class="t-val">${rider.distFromMe}</span>
-          <span class="t-lbl">Gap</span>
+
+        <div class="telemetry-card-metrics">
+          <div class="metric-box">
+            <span class="m-val" style="color:var(--primary-orange);">${rider.speed.toFixed(1)}</span>
+            <span class="m-unit">km/h</span>
+            <span class="m-lbl">Speed</span>
+          </div>
+
+          <div class="metric-box">
+            <span class="m-val ${isEmergency ? 'warn-txt' : ''}">${rider.distFromMe}</span>
+            <span class="m-unit">formation</span>
+            <span class="m-lbl">Gap</span>
+          </div>
+
+          <div class="metric-box">
+            <span class="m-val" style="color:var(--accent-cyan);">${rider.heading.toFixed(0)}°</span>
+            <span class="m-unit">bearing</span>
+            <span class="m-lbl">Heading</span>
+          </div>
         </div>
-        <div class="t-cell">
-          <span class="t-val">${rider.status === 'riding' ? '🟢 Riding' : '🔴 Stopped'}</span>
-          <span class="t-lbl">Status</span>
-        </div>
+
+        ${profile.emergencyContactPhone ? `
+          <div class="telemetry-card-footer">
+            <span class="emergency-contact-text">Emergency Contact: <strong>${profile.emergencyContactName || 'Contact'}</strong></span>
+            <a href="tel:${profile.emergencyContactPhone.replace(/[\s-]/g, '')}" class="btn-quick-call" onclick="event.stopPropagation()">
+              📞 ${profile.emergencyContactPhone}
+            </a>
+          </div>
+        ` : ''}
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+}
+
+function centerMapOnRider(riderId, lat, lng) {
+  if (state.map && lat && lng) {
+    state.map.setView([lat, lng], 15);
+    showToast(`🎯 Centered map on ${state.riders.find(r => r.id === riderId)?.name || 'rider'}`, 'info');
+  }
 }
 
 // Live GPS Simulation Loop
@@ -603,6 +679,100 @@ function confirmExitRide() {
 // -------------------------------------------------------------
 // GLOVE-FRIENDLY QUICK ACTIONS (Tea, Fuel, Food, Photo, SOS)
 // -------------------------------------------------------------
+// -------------------------------------------------------------
+// AUDIO BUZZER SYNTHESIZER ENGINE (Web Audio API & Vibration)
+// -------------------------------------------------------------
+let activeSosAudioCtx = null;
+let activeSosOscillator = null;
+let sosBuzzerInterval = null;
+
+function playSosBuzzerSound() {
+  stopSosBuzzerSound();
+  try {
+    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtxClass) return;
+
+    activeSosAudioCtx = new AudioCtxClass();
+    if (activeSosAudioCtx.state === 'suspended') {
+      activeSosAudioCtx.resume();
+    }
+
+    const osc = activeSosAudioCtx.createOscillator();
+    const gain = activeSosAudioCtx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(960, activeSosAudioCtx.currentTime);
+    gain.gain.setValueAtTime(0.7, activeSosAudioCtx.currentTime);
+
+    osc.connect(gain);
+    gain.connect(activeSosAudioCtx.destination);
+    osc.start();
+
+    activeSosOscillator = osc;
+
+    // Rapid alternating dual-tone siren pulse (960Hz <-> 640Hz)
+    let isHighTone = true;
+    sosBuzzerInterval = setInterval(() => {
+      if (!activeSosAudioCtx || !activeSosOscillator) return;
+      isHighTone = !isHighTone;
+      const freq = isHighTone ? 960 : 640;
+      activeSosOscillator.frequency.setValueAtTime(freq, activeSosAudioCtx.currentTime);
+    }, 180);
+
+    if (navigator.vibrate) {
+      navigator.vibrate([400, 150, 400, 150, 400, 150, 800]);
+    }
+  } catch (e) {
+    console.warn('[RideSync Audio] Could not start emergency audio buzzer:', e);
+  }
+}
+
+function stopSosBuzzerSound() {
+  if (sosBuzzerInterval) {
+    clearInterval(sosBuzzerInterval);
+    sosBuzzerInterval = null;
+  }
+  if (activeSosOscillator) {
+    try { activeSosOscillator.stop(); } catch (e) {}
+    activeSosOscillator = null;
+  }
+  if (activeSosAudioCtx) {
+    try { activeSosAudioCtx.close(); } catch (e) {}
+    activeSosAudioCtx = null;
+  }
+}
+
+function playWarningChimeSound() {
+  try {
+    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtxClass) return;
+    const ctx = new AudioCtxClass();
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+
+    if (navigator.vibrate) {
+      navigator.vibrate([150, 80, 150]);
+    }
+  } catch (e) {}
+}
+
+// -------------------------------------------------------------
+// GLOVE-FRIENDLY QUICK ACTIONS (Tea, Fuel, Food, Photo, SOS)
+// -------------------------------------------------------------
 function triggerQuickAction(type, title) {
   const activeUser = RideSyncDB.getActiveUser();
   const ride = state.currentRide;
@@ -631,7 +801,7 @@ function triggerSosEmergency() {
   const activeUser = RideSyncDB.getActiveUser();
   const ride = state.currentRide;
 
-  // Broadcast SOS alert banner
+  // Broadcast SOS alert banner + Trigger Loud Siren Audio
   showAlertBanner('sos', `🚨 SOS: ${activeUser.name} triggered an Emergency Alert! Contact: ${activeUser.emergencyContactPhone || 'Active'}`, true);
 
   RideSyncDB.addMessage(ride.id, {
@@ -644,22 +814,95 @@ function triggerSosEmergency() {
   showToast('🚨 SOS DISTRESS BROADCASTED TO ENTIRE GROUP!', 'error');
 }
 
-function showAlertBanner(type, message, persistent = false) {
+function copySosPhoneNumber(phone) {
+  if (!phone) return;
+  const cleanPhone = phone.trim();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(cleanPhone);
+  }
+  showToast(`📋 Copied emergency contact: "${cleanPhone}" to clipboard!`, 'success');
+}
+
+function showAlertBanner(type, message, persistent = false, phoneNum = null) {
   const container = document.getElementById('liveAlertsContainer');
   if (!container) return;
 
   const alertId = 'alert-' + Date.now();
   const alertEl = document.createElement('div');
   alertEl.id = alertId;
-  alertEl.className = `live-alert-banner ${type === 'sos' ? 'sos-banner' : type === 'deviation' ? 'deviation-banner' : 'separation-banner'}`;
+
+  let boxClass = 'info-box';
+  let icon = 'ℹ️';
+  let title = 'System Alert';
+
+  // Extract phone number from message if not explicitly provided
+  let extractedPhone = phoneNum;
+  if (!extractedPhone && (type === 'sos' || message.includes('Contact:'))) {
+    const match = message.match(/(\+?\d[\d\s-]{8,}\d)/);
+    if (match) extractedPhone = match[1].trim();
+  }
+
+  if (type === 'sos') {
+    boxClass = 'sos-box';
+    icon = '🚨';
+    title = 'SOS EMERGENCY BROADCAST';
+    playSosBuzzerSound(); // Trigger emergency siren buzzer audio tone
+  } else if (type === 'separation') {
+    boxClass = 'separation-box';
+    icon = '⚠️';
+    title = 'RIDER SEPARATION ALERT';
+    playWarningChimeSound(); // Trigger warning chime sound
+  } else if (type === 'deviation') {
+    boxClass = 'deviation-box';
+    icon = '🗺️';
+    title = 'ROUTE CORRIDOR DEVIATION';
+    playWarningChimeSound(); // Trigger warning chime sound
+  } else if (type === 'pin') {
+    boxClass = 'info-box';
+    icon = '📍';
+    title = 'CONVOY STOP PIN';
+  }
+
+  alertEl.className = `hud-notification-box ${boxClass}`;
   alertEl.innerHTML = `
-    <span>${message}</span>
-    <button class="btn-dismiss-alert" onclick="document.getElementById('${alertId}').remove()">✕</button>
+    <div class="hud-box-header">
+      <div class="hud-box-title-row">
+        <span class="hud-box-icon">${icon}</span>
+        <span class="hud-box-title">${title}</span>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        ${type === 'sos' ? `<button class="hud-box-btn-mute" onclick="stopSosBuzzerSound(); this.innerText='🔇 Muted';" style="background:rgba(255,23,68,0.2); border:1px solid var(--accent-red); color:var(--text-primary); font-size:10px; font-weight:800; padding:2px 8px; border-radius:4px; cursor:pointer;">🔊 Mute Siren</button>` : ''}
+        <button class="hud-box-btn-close" onclick="stopSosBuzzerSound(); document.getElementById('${alertId}').remove()" title="Dismiss notification">✕</button>
+      </div>
+    </div>
+    <div class="hud-box-body">
+      ${message}
+    </div>
+    ${extractedPhone ? `
+      <div class="hud-sos-actions">
+        <button class="btn-copy-phone" onclick="copySosPhoneNumber('${extractedPhone}')">
+          📋 Copy Number: ${extractedPhone}
+        </button>
+        <a href="tel:${extractedPhone.replace(/[\s-]/g, '')}" class="btn-call-phone">
+          📞 Call Now
+        </a>
+      </div>
+    ` : ''}
+    ${!persistent ? '<div class="hud-box-progress"></div>' : ''}
   `;
+
   container.appendChild(alertEl);
 
   if (!persistent) {
-    setTimeout(() => alertEl.remove(), 8000);
+    setTimeout(() => {
+      const el = document.getElementById(alertId);
+      if (el) {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-10px)';
+        el.style.transition = 'all 0.25s ease';
+        setTimeout(() => el.remove(), 250);
+      }
+    }, 6000);
   }
 }
 
@@ -691,6 +934,7 @@ function simulatePeerSos() {
 }
 
 function resetSimNormal() {
+  stopSosBuzzerSound(); // Stop any active emergency siren
   state.riders.forEach((r, idx) => {
     r.isSeparated = false;
     r.status = 'riding';
