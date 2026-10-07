@@ -217,60 +217,7 @@ function initSchema() {
     );
   `);
 
-  seedDefaultData();
-}
-
-function seedDefaultData() {
-  const profileCount = db.prepare('SELECT COUNT(*) as count FROM profiles').get().count;
-  if (profileCount === 0) {
-    console.log('[RideSync DB] Seeding initial rider profiles and rides into local SQLite database...');
-    
-    // Seed Profiles
-    const insertProfile = db.prepare(`
-      INSERT INTO profiles (id, name, username, phone, phone_formatted, avatar, avatar_color, bike_model, blood_group, emergency_contact_name, emergency_contact_phone, rides_count, total_km, role_default)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertProfile.run('usr-bose', 'Bose', 'bose_ktm', '+919876543210', '+91 98765 43210', 'B', '#FF6B00', 'KTM 390 Adventure', 'O+ve', 'Vikram (Brother)', '+91 98765 00001', 14, 3840, 'Lead / Navigator');
-    insertProfile.run('usr-arun', 'Arun', 'arun_gs', '+919876543211', '+91 98765 43211', 'A', '#00E5FF', 'BMW G310 GS', 'B+ve', 'Pooja (Wife)', '+91 98765 00002', 9, 2450, 'Sweeper');
-    insertProfile.run('usr-karthi', 'Karthi', 'karthi_hunter', '+919876543212', '+91 98765 43212', 'K', '#FFD600', 'Royal Enfield Hunter 350', 'A+ve', 'Suresh (Father)', '+91 98765 00003', 6, 1890, 'Rider');
-    insertProfile.run('usr-vicky', 'Vicky', 'vicky_scrambler', '+919876543213', '+91 98765 43213', 'V', '#00E676', 'Triumph Scrambler 400X', 'AB+ve', 'Dinesh (Friend)', '+91 98765 00004', 16, 4620, 'Rider');
-    insertProfile.run('usr-priya', 'Priya', 'priya_ninja', '+919876543214', '+91 98765 43214', 'P', '#E040FB', 'Kawasaki Ninja 300', 'O-ve', 'Meera (Mother)', '+91 98765 00005', 8, 2100, 'Rider');
-
-    // Seed Ride 1: Kodaikanal
-    db.prepare(`
-      INSERT INTO rides (id, code, name, description, creator_id, date, time, status, start_address, start_lat, start_lng, dest_address, dest_lat, dest_lng, distance_km, duration_hours)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('ride-kodai-2026', 'KODAI26', 'Kodaikanal Weekend Ride', 'Epic ghat climb from Silk Board to Pillar Rocks', 'usr-bose', '2026-10-10', '05:00', 'active', 'Silk Board, Bangalore', 12.9176, 77.6233, 'Pillar Rocks, Kodaikanal', 10.2185, 77.4682, 324.8, 8.5);
-
-    // Seed Members
-    const insertMember = db.prepare('INSERT INTO ride_members (ride_id, user_id, role, status) VALUES (?, ?, ?, ?)');
-    insertMember.run('ride-kodai-2026', 'usr-bose', 'creator', 'ready');
-    insertMember.run('ride-kodai-2026', 'usr-arun', 'admin', 'ready');
-    insertMember.run('ride-kodai-2026', 'usr-karthi', 'rider', 'joined');
-    insertMember.run('ride-kodai-2026', 'usr-vicky', 'rider', 'ready');
-
-    // Seed Waypoints
-    const insertWp = db.prepare('INSERT INTO waypoints (ride_id, name, type, icon, lat, lng, sequence, planned_duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    insertWp.run('ride-kodai-2026', 'Silk Board, Bangalore', 'start', '🏁', 12.9176, 77.6233, 1, 0);
-    insertWp.run('ride-kodai-2026', 'Salem Highway Tea Halt', 'tea', '☕', 11.6643, 78.1460, 2, 30);
-    insertWp.run('ride-kodai-2026', 'Dindigul Bypass BPCL Fuel', 'fuel', '⛽', 10.3673, 77.9803, 3, 15);
-    insertWp.run('ride-kodai-2026', 'Silver Cascade Falls', 'photo', '📸', 10.2582, 77.5186, 4, 20);
-    insertWp.run('ride-kodai-2026', 'Coaker\'s Walk & Viewpoint', 'photo', '📸', 10.2324, 77.4947, 5, 30);
-    insertWp.run('ride-kodai-2026', 'Pillar Rocks, Kodaikanal', 'destination', '📍', 10.2185, 77.4682, 6, 0);
-
-    // Seed Past Ride: Nandi Hills
-    db.prepare(`
-      INSERT INTO rides (id, code, name, description, creator_id, date, time, status, start_address, start_lat, start_lng, dest_address, dest_lat, dest_lng, distance_km, duration_hours)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('ride-nandi-2026', 'NANDI01', 'Nandi Hills Dawn Sprint', 'Sunrise sprint to hilltop view tower', 'usr-bose', '2026-09-28', '05:30', 'completed', 'Hebbal Mall', 13.0358, 77.5970, 'Nandi Hills', 13.3702, 77.6835, 64.2, 2.2);
-
-    insertMember.run('ride-nandi-2026', 'usr-bose', 'creator', 'ready');
-    insertMember.run('ride-nandi-2026', 'usr-arun', 'rider', 'ready');
-    insertMember.run('ride-nandi-2026', 'usr-vicky', 'rider', 'ready');
-
-    console.log('[RideSync DB] Seeding completed successfully.');
-  }
+  console.log('[RideSync DB] Database schema initialized (Clean Mode - 0 test data).');
 }
 
 initSchema();
@@ -545,6 +492,25 @@ const server = http.createServer((req, res) => {
       }
     });
     return;
+  }
+
+  // Clean Reset Sandbox Database (Wipes all test rows)
+  if (pathname === '/api/db/clean-reset' && req.method === 'POST') {
+    try {
+      db.exec(`
+        DELETE FROM ride_messages;
+        DELETE FROM ride_pins;
+        DELETE FROM waypoints;
+        DELETE FROM ride_members;
+        DELETE FROM rides;
+        DELETE FROM profiles;
+        DELETE FROM otp_verifications;
+        VACUUM;
+      `);
+      return sendJson(200, { success: true, message: 'Sandbox database wiped clean (0 records).' });
+    } catch (e) {
+      return sendJson(500, { error: e.message });
+    }
   }
 
   // Request Phone OTP

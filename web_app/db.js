@@ -52,54 +52,10 @@ const RideSyncDB = (function () {
   // Initial health check
   checkServerHealth();
 
-  // Fallback Local Storage Seed
+  // Clean Sandbox Storage Baseline
   const defaultDatabase = {
-    profiles: [
-      { id: 'usr-bose', name: 'Bose', phone: '+919876543210', phoneFormatted: '+91 98765 43210', username: 'bose_ktm', avatar: 'B', avatarColor: '#FF6B00', bikeModel: 'KTM 390 Adventure', bloodGroup: 'O+ve', emergencyContactName: 'Vikram (Brother)', emergencyContactPhone: '+91 98765 00001', ridesCount: 14, totalKm: 3840, roleDefault: 'Lead / Navigator' },
-      { id: 'usr-arun', name: 'Arun', phone: '+919876543211', phoneFormatted: '+91 98765 43211', username: 'arun_gs', avatar: 'A', avatarColor: '#00E5FF', bikeModel: 'BMW G310 GS', bloodGroup: 'B+ve', emergencyContactName: 'Pooja (Wife)', emergencyContactPhone: '+91 98765 00002', ridesCount: 9, totalKm: 2450, roleDefault: 'Sweeper' },
-      { id: 'usr-karthi', name: 'Karthi', phone: '+919876543212', phoneFormatted: '+91 98765 43212', username: 'karthi_hunter', avatar: 'K', avatarColor: '#FFD600', bikeModel: 'Royal Enfield Hunter 350', bloodGroup: 'A+ve', emergencyContactName: 'Suresh (Father)', emergencyContactPhone: '+91 98765 00003', ridesCount: 6, totalKm: 1890, roleDefault: 'Rider' },
-      { id: 'usr-vicky', name: 'Vicky', phone: '+919876543213', phoneFormatted: '+91 98765 43213', username: 'vicky_scrambler', avatar: 'V', avatarColor: '#00E676', bikeModel: 'Triumph Scrambler 400X', bloodGroup: 'AB+ve', emergencyContactName: 'Dinesh (Friend)', emergencyContactPhone: '+91 98765 00004', ridesCount: 16, totalKm: 4620, roleDefault: 'Rider' },
-      { id: 'usr-priya', name: 'Priya', phone: '+919876543214', phoneFormatted: '+91 98765 43214', username: 'priya_ninja', avatar: 'P', avatarColor: '#E040FB', bikeModel: 'Kawasaki Ninja 300', bloodGroup: 'O-ve', emergencyContactName: 'Meera (Mother)', emergencyContactPhone: '+91 98765 00005', ridesCount: 8, totalKm: 2100, roleDefault: 'Rider' }
-    ],
-    rides: [
-      {
-        id: 'ride-kodai-2026',
-        code: 'KODAI26',
-        name: 'Kodaikanal Weekend Ride',
-        description: 'Epic ghat climb from Silk Board to Pillar Rocks',
-        creatorId: 'usr-bose',
-        date: '2026-10-10',
-        time: '05:00',
-        status: 'active',
-        startAddress: 'Silk Board, Bangalore',
-        startLat: 12.9176,
-        startLng: 77.6233,
-        destAddress: 'Pillar Rocks, Kodaikanal',
-        destLat: 10.2185,
-        destLng: 77.4682,
-        distanceKm: 324.8,
-        durationHours: 8.5,
-        members: [
-          { userId: 'usr-bose', role: 'creator', status: 'ready', isLead: true },
-          { userId: 'usr-arun', role: 'admin', status: 'ready', isLead: false },
-          { userId: 'usr-karthi', role: 'rider', status: 'joined', isLead: false },
-          { userId: 'usr-vicky', role: 'rider', status: 'ready', isLead: false }
-        ],
-        waypoints: [
-          { id: 1, name: 'Silk Board, Bangalore', type: 'start', icon: '🏁', lat: 12.9176, lng: 77.6233 },
-          { id: 2, name: 'Salem Highway Tea Halt', type: 'tea', icon: '☕', lat: 11.6643, lng: 78.1460 },
-          { id: 3, name: 'Dindigul Bypass BPCL Fuel', type: 'fuel', icon: '⛽', lat: 10.3673, lng: 77.9803 },
-          { id: 4, name: 'Silver Cascade Falls', type: 'photo', icon: '📸', lat: 10.2582, lng: 77.5186 },
-          { id: 5, name: 'Coaker\'s Walk & Viewpoint', type: 'photo', icon: '📸', lat: 10.2324, lng: 77.4947 },
-          { id: 6, name: 'Pillar Rocks, Kodaikanal', type: 'destination', icon: '📍', lat: 10.2185, lng: 77.4682 }
-        ],
-        pins: [],
-        messages: [
-          { id: 'msg-1', type: 'system', text: 'Ride "Kodaikanal Weekend Ride" created by Bose', time: '04:45 AM' },
-          { id: 'msg-2', senderId: 'usr-arun', senderName: 'Arun', text: 'Reaching Silk Board point in 5 mins 🏍️', time: '04:55 AM' }
-        ]
-      }
-    ]
+    profiles: [],
+    rides: []
   };
 
   function loadDb() {
@@ -107,7 +63,7 @@ const RideSyncDB = (function () {
       const stored = localStorage.getItem(DB_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed.profiles && parsed.rides) return parsed;
+        if (Array.isArray(parsed.profiles) && Array.isArray(parsed.rides)) return parsed;
       }
     } catch (e) {}
     saveDb(defaultDatabase);
@@ -139,6 +95,9 @@ const RideSyncDB = (function () {
   }
 
   return {
+    getApiBaseUrl() {
+      return API_BASE;
+    },
     isServerConnected() {
       return isServerConnected;
     },

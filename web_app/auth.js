@@ -71,7 +71,8 @@ const RideSyncAuth = (function () {
 
     // Call Backend API
     try {
-      const res = await fetch('http://localhost:5000/api/auth/request-otp', {
+      const apiUrl = typeof RideSyncDB !== 'undefined' && RideSyncDB.getApiBaseUrl ? RideSyncDB.getApiBaseUrl() : 'https://ridesync-yibf.onrender.com/api';
+      const res = await fetch(`${apiUrl}/auth/request-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: pendingPhone })
@@ -112,7 +113,8 @@ const RideSyncAuth = (function () {
     generatedOtp = '123456';
 
     try {
-      await fetch('http://localhost:5000/api/auth/request-otp', {
+      const apiUrl = typeof RideSyncDB !== 'undefined' && RideSyncDB.getApiBaseUrl ? RideSyncDB.getApiBaseUrl() : 'https://ridesync-yibf.onrender.com/api';
+      await fetch(`${apiUrl}/auth/request-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: pendingPhone })
@@ -173,7 +175,8 @@ const RideSyncAuth = (function () {
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/verify-otp', {
+      const apiUrl = typeof RideSyncDB !== 'undefined' && RideSyncDB.getApiBaseUrl ? RideSyncDB.getApiBaseUrl() : 'https://ridesync-yibf.onrender.com/api';
+      const res = await fetch(`${apiUrl}/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: pendingPhone, otp: enteredOtp })
