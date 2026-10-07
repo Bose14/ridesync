@@ -3,6 +3,9 @@
 -- Creates rider profiles, default rides, waypoints, and security records
 -- ====================================================================
 
+-- 0. Ensure foreign key constraint to auth.users is dropped so test accounts seed cleanly
+ALTER TABLE IF EXISTS public.profiles DROP CONSTRAINT IF EXISTS profiles_id_fkey;
+
 -- 1. Insert Initial Rider Profiles
 INSERT INTO public.profiles (id, name, username, avatar_url, phone_number, bike_model, emergency_contact)
 VALUES 

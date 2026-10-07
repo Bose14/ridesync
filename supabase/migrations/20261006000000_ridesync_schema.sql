@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "postgis";
 
 -- 2. User Profiles Table
 CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     username TEXT UNIQUE NOT NULL,
     avatar_url TEXT,
@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Safely remove any existing auth.users foreign key lock if table was already created
+ALTER TABLE IF EXISTS public.profiles DROP CONSTRAINT IF EXISTS profiles_id_fkey;
 
 -- Index for username lookup
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
