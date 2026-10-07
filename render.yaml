@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ridesync-backend
+    runtime: node
+    plan: free
+    buildCommand: "cd server && npm install"
+    startCommand: "cd server && node server.js"
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.0.0
+      - key: PORT
+        value: 5000

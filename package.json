@@ -1,0 +1,15 @@
+{
+  "name": "ridesync",
+  "version": "1.0.0",
+  "description": "RideSync / Payanam Motorcycle Group Riding Platform",
+  "scripts": {
+    "start": "node server/server.js",
+    "serve:web": "npx -y serve web_app -l 3000",
+    "dev:server": "node --watch server/server.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "author": "Bose",
+  "license": "MIT"
+}

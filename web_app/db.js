@@ -6,7 +6,25 @@
  */
 
 const RideSyncDB = (function () {
-  const API_BASE = 'http://localhost:5000/api';
+  function resolveApiBase() {
+    if (typeof window !== 'undefined' && window.__RIDESYNC_API_URL__) {
+      return window.__RIDESYNC_API_URL__;
+    }
+    try {
+      const custom = localStorage.getItem('ridesync_custom_api_base');
+      if (custom) return custom.replace(/\/+$/, '');
+    } catch (e) {}
+
+    if (typeof window !== 'undefined') {
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'http://localhost:5000/api';
+      }
+      return `${window.location.origin}/api`;
+    }
+    return 'http://localhost:5000/api';
+  }
+
+  const API_BASE = resolveApiBase();
   const DB_KEY = 'ridesync_db_v2';
   const SESSION_KEY = 'ridesync_active_user_id';
   const MAP_CONFIG_KEY = 'ridesync_map_config';

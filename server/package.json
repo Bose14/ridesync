@@ -1,0 +1,16 @@
+{
+  "name": "ridesync-backend",
+  "version": "1.0.0",
+  "description": "RideSync / Payanam Realtime Backend Server & Database Engine",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": ["motorcycle", "telemetry", "realtime", "gps", "ridesync"],
+  "author": "Bose",
+  "license": "MIT"
+}
