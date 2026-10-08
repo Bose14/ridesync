@@ -2094,8 +2094,6 @@ function toggleCockpit3dPerspective() {
 }
 
 // Enhanced Recenter with intelligent zoom and follow mode
-let lastRecenterClickTime = 0;
-
 function recenterOnGroup(showFeedback = true) {
   if (!state.map) return;
   try { state.map.invalidateSize(); } catch(e) {}
