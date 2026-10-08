@@ -1398,24 +1398,45 @@ function shareViaWhatsApp() {
 let lastTelemetryBroadcastTime = 0;
 
 function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
-  const activeUser = RideSyncDB.getActiveUser();
-  const currentRide = state.currentRide || RideSyncDB.getRides()[0];
-  if (!activeUser || typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
+  const db = window.RideSyncDB || window.PayanamDB;
+  const activeUser = db ? db.getActiveUser() : null;
+  const currentRide = state.currentRide || (db ? db.getRides()[0] : null);
+  if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
 
-  state.userGps = { lat, lng, speed, heading };
+  state.userGps = { lat, lng, speed: Math.round(speed || 0), heading: Math.round(heading || 0) };
 
   // Update my rider coordinates in state.riders
-  let myRider = (state.riders || []).find(r => r.isMe || r.id === activeUser.id);
+  state.riders = state.riders || [];
+  let myRider = state.riders.find(r => r.isMe || (activeUser && (r.id === activeUser.id || r.name === activeUser.name)));
   if (myRider) {
     myRider.lat = lat;
     myRider.lng = lng;
-    myRider.speed = speed || 0;
-    myRider.heading = heading || 0;
+    myRider.speed = Math.max(0, speed || 0);
+    myRider.heading = Math.round(heading || 0);
+    myRider.isMe = true;
+    myRider.status = (speed || 0) > 2 ? 'riding' : 'stopped';
     myRider.lastSeen = 'Just now';
+  } else {
+    myRider = {
+      id: activeUser ? activeUser.id : 'user-me',
+      name: activeUser ? activeUser.name : 'You',
+      bike: activeUser ? (activeUser.bike || activeUser.bikeModel || 'Motorcycle') : 'Motorcycle',
+      avatarColor: activeUser ? (activeUser.avatarColor || '#00E5FF') : '#00E5FF',
+      isMe: true,
+      isLead: false,
+      lat: lat,
+      lng: lng,
+      speed: Math.max(0, speed || 0),
+      heading: Math.round(heading || 0),
+      battery: 95,
+      status: (speed || 0) > 2 ? 'riding' : 'stopped',
+      lastSeen: 'Just now'
+    };
+    state.riders.unshift(myRider);
   }
 
   // Recalculate distance from me to all other riders
-  (state.riders || []).forEach(r => {
+  state.riders.forEach(r => {
     if (!r.isMe && typeof r.lat === 'number' && typeof r.lng === 'number') {
       const d = calculateDistanceKm(lat, lng, r.lat, r.lng);
       if (d !== null) {
@@ -1429,18 +1450,18 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
 
   // If Ride Navigation follow mode is active, smoothly track rider like Google Maps
   if (state.isNavFollowMode && state.map) {
-    state.map.panTo([lat, lng], { animate: true, duration: 0.7 });
+    state.map.panTo([lat, lng], { animate: true, duration: 0.45, easeLinearity: 0.25 });
   }
 
   const now = Date.now();
-  if (now - lastTelemetryBroadcastTime > 2000) {
+  if (now - lastTelemetryBroadcastTime > 1500) {
     lastTelemetryBroadcastTime = now;
 
     const payload = {
       type: 'location_update',
       rideId: currentRide?.id,
-      userId: activeUser.id,
-      name: activeUser.name,
+      userId: activeUser ? activeUser.id : 'user-me',
+      name: activeUser ? activeUser.name : 'You',
       lat,
       lng,
       speed: Math.round(speed || 0),
@@ -1450,11 +1471,13 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
     };
 
     // 1. Broadcast over WebSocket to peer riders
-    PayanamRealtime.broadcast(payload);
+    if (window.PayanamRealtime) {
+      PayanamRealtime.broadcast(payload);
+    }
 
     // 2. Persist to server SQLite database
-    if (currentRide?.id) {
-      RideSyncDB.sendRiderTelemetry(currentRide.id, payload);
+    if (currentRide?.id && db && db.sendRiderTelemetry) {
+      db.sendRiderTelemetry(currentRide.id, payload);
     }
   }
 }
@@ -1959,16 +1982,16 @@ function startTelemetrySimulation() {
   clearInterval(state.simInterval);
   state.simInterval = setInterval(() => {
     if (!state.isSimRunning) return;
-    simStep += 0.0002;
+    simStep += 0.0003;
 
     // Move leader and members along path
-    state.riders.forEach((rider, idx) => {
+    (state.riders || []).forEach((rider, idx) => {
       if (rider.status === 'riding') {
-        const stepLat = Math.cos(simStep + idx) * 0.00015;
-        const stepLng = Math.sin(simStep + idx) * 0.00015;
+        const stepLat = Math.cos(simStep + idx) * 0.00018;
+        const stepLng = Math.sin(simStep + idx) * 0.00018;
         rider.lat += stepLat;
         rider.lng += stepLng;
-        rider.heading = ((Math.atan2(stepLng, stepLat) * 180 / Math.PI) + 360) % 360;
+        rider.heading = Math.round(((Math.atan2(stepLng, stepLat) * 180 / Math.PI) + 360) % 360);
         rider.speed = Math.max(45, Math.min(85, rider.speed + (Math.random() * 4 - 2)));
       }
     });
@@ -1977,12 +2000,18 @@ function startTelemetrySimulation() {
     renderRiderTelemetryCards();
 
     // If Ride Navigation follow mode is active, smoothly track user's rider like Google Maps
-    const activeUser = PayanamDB.getActiveUser();
-    const myRider = (state.riders || []).find(r => r.isMe || (activeUser && r.id === activeUser.id));
-    if (myRider && state.isNavFollowMode && state.map) {
-      state.map.panTo([myRider.lat, myRider.lng], { animate: true, duration: 0.8 });
+    const db = window.RideSyncDB || window.PayanamDB;
+    const activeUser = db ? db.getActiveUser() : null;
+    const myRider = (state.riders || []).find(r => r.isMe || (activeUser && (r.id === activeUser.id || r.name === activeUser.name)));
+    if (myRider) {
+      const speedEl = document.getElementById('navCurrentSpeed');
+      if (speedEl) speedEl.innerText = `${Math.round(myRider.speed || 0)} km/h`;
+
+      if (state.isNavFollowMode && state.map) {
+        state.map.panTo([myRider.lat, myRider.lng], { animate: true, duration: 0.5, easeLinearity: 0.25 });
+      }
     }
-  }, 2500);
+  }, 1200);
 }
 
 function toggleTelemetrySim() {

@@ -144,6 +144,10 @@ const PayanamMaps = (function () {
     return false;
   }
 
+  let lastReportedLat = null;
+  let lastReportedLng = null;
+  let gpsHeartbeatInterval = null;
+
   // 3. HTML5 Live Device GPS Geolocation
   function startLiveGpsTracking(mapInstance, onLocationUpdate, onError) {
     if (!navigator.geolocation) {
@@ -152,54 +156,89 @@ const PayanamMaps = (function () {
     }
 
     stopLiveGpsTracking(mapInstance);
-
     deviceGpsActive = true;
-    watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const coords = position.coords;
-        const lat = coords.latitude;
-        const lng = coords.longitude;
-        const accuracy = coords.accuracy || 10;
-        const speed = coords.speed !== null && coords.speed !== undefined ? Math.max(0, coords.speed * 3.6) : 0; // m/s to km/h
-        const heading = coords.heading || 0;
 
-        // Render accuracy circle on map
-        if (mapInstance) {
-          if (!deviceAccuracyCircle) {
-            deviceAccuracyCircle = L.circle([lat, lng], {
-              radius: accuracy,
-              color: '#00E5FF',
-              fillColor: '#00E5FF',
-              fillOpacity: 0.15,
-              weight: 1
-            }).addTo(mapInstance);
-          } else {
-            deviceAccuracyCircle.setLatLng([lat, lng]);
-            deviceAccuracyCircle.setRadius(accuracy);
-          }
-        }
+    const processPosition = (position) => {
+      if (!position || !position.coords) return;
+      const coords = position.coords;
+      const lat = coords.latitude;
+      const lng = coords.longitude;
+      const accuracy = coords.accuracy || 8;
+      let speed = coords.speed !== null && coords.speed !== undefined && !isNaN(coords.speed) ? Math.max(0, coords.speed * 3.6) : 0;
+      let heading = coords.heading;
 
-        if (onLocationUpdate) {
-          onLocationUpdate({
-            lat,
-            lng,
-            accuracy,
-            speed,
-            heading,
-            timestamp: position.timestamp
-          });
+      // Calculate trajectory bearing if device compass heading is null or unavailable
+      if (typeof heading !== 'number' || isNaN(heading) || heading === 0) {
+        if (lastReportedLat !== null && lastReportedLng !== null && (lat !== lastReportedLat || lng !== lastReportedLng)) {
+          const dLat = (lat - lastReportedLat) * Math.PI / 180;
+          const dLng = (lng - lastReportedLng) * Math.PI / 180;
+          const y = Math.sin(dLng) * Math.cos(lat * Math.PI / 180);
+          const x = Math.cos(lastReportedLat * Math.PI / 180) * Math.sin(lat * Math.PI / 180) - Math.sin(lastReportedLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.cos(dLng);
+          heading = ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
         }
-      },
-      (err) => {
-        console.warn('Geolocation watch error:', err.message);
-        if (onError) onError(err.message);
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 2000,
-        timeout: 10000
       }
-    );
+
+      lastReportedLat = lat;
+      lastReportedLng = lng;
+
+      // Render or update accuracy circle on map
+      if (mapInstance) {
+        if (!deviceAccuracyCircle) {
+          deviceAccuracyCircle = L.circle([lat, lng], {
+            radius: Math.min(accuracy, 30),
+            color: '#00E5FF',
+            fillColor: '#00E5FF',
+            fillOpacity: 0.12,
+            weight: 1.5
+          }).addTo(mapInstance);
+        } else {
+          deviceAccuracyCircle.setLatLng([lat, lng]);
+          deviceAccuracyCircle.setRadius(Math.min(accuracy, 30));
+        }
+      }
+
+      if (onLocationUpdate) {
+        onLocationUpdate({
+          lat,
+          lng,
+          accuracy,
+          speed,
+          heading: heading || 0,
+          timestamp: position.timestamp || Date.now()
+        });
+      }
+    };
+
+    // Immediate fix
+    navigator.geolocation.getCurrentPosition(processPosition, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
+
+    // 1. High-Precision Continuous Watcher (maximumAge: 0 for zero lag)
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        processPosition,
+        (err) => {
+          console.warn('Geolocation watch notice:', err.message);
+          if (onError) onError(err.message);
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 8000
+        }
+      );
+    } catch (e) {
+      console.warn('WatchPosition error:', e);
+    }
+
+    // 2. Continuous 1.2s GPS Polling Heartbeat (guarantees continuous tracking without mobile browser sleep)
+    gpsHeartbeatInterval = setInterval(() => {
+      if (!deviceGpsActive) return;
+      navigator.geolocation.getCurrentPosition(
+        processPosition,
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 3500 }
+      );
+    }, 1200);
 
     return true;
   }
@@ -209,9 +248,13 @@ const PayanamMaps = (function () {
       navigator.geolocation.clearWatch(watchId);
       watchId = null;
     }
+    if (gpsHeartbeatInterval !== null) {
+      clearInterval(gpsHeartbeatInterval);
+      gpsHeartbeatInterval = null;
+    }
     deviceGpsActive = false;
     if (deviceAccuracyCircle && mapInstance) {
-      mapInstance.removeLayer(deviceAccuracyCircle);
+      try { mapInstance.removeLayer(deviceAccuracyCircle); } catch(e) {}
       deviceAccuracyCircle = null;
     }
   }
