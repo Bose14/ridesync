@@ -220,31 +220,64 @@ function loadCurrentRideFromDb(rideId) {
   }
 }
 
-// Synchronize rider members from DB profiles
+// Haversine formula to compute actual geographic distance between riders across cities
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+  if (lat1 === undefined || lon1 === undefined || lat2 === undefined || lon2 === undefined) return null;
+  const numLat1 = Number(lat1);
+  const numLon1 = Number(lon1);
+  const numLat2 = Number(lat2);
+  const numLon2 = Number(lon2);
+  if (isNaN(numLat1) || isNaN(numLon1) || isNaN(numLat2) || isNaN(numLon2)) return null;
+
+  const R = 6371; // Earth radius in km
+  const dLat = (numLat2 - numLat1) * Math.PI / 180;
+  const dLon = (numLon2 - numLon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(numLat1 * Math.PI / 180) * Math.cos(numLat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Synchronize rider members from DB profiles & live coordinates
 function syncRidersFromDb(ride) {
   const activeUser = RideSyncDB.getActiveUser();
   const dbProfiles = RideSyncDB.getProfiles();
 
+  const myLat = state.userGps?.lat || (state.riders.find(r => r.isMe)?.lat) || ride.start_lat || ride.startLat || 12.9716;
+  const myLng = state.userGps?.lng || (state.riders.find(r => r.isMe)?.lng) || ride.start_lng || ride.startLng || 77.5946;
+
   state.riders = (ride.members || []).map((m, idx) => {
-    const profile = dbProfiles.find(p => p.id === m.userId) || {
-      id: m.userId,
+    const memberId = m.userId || m.user_id;
+    const profile = dbProfiles.find(p => p.id === memberId) || {
+      id: memberId,
       name: 'Rider ' + (idx + 1),
       bikeModel: 'Motorcycle',
       avatar: 'R',
-      avatarColor: '#FF6B00'
+      avatarColor: '#00E5FF'
     };
 
     const isMe = profile.id === activeUser.id;
-    const isLead = m.isLead || m.role === 'creator';
+    const isLead = m.isLead || m.role === 'creator' || ride.creator_id === memberId || ride.creatorId === memberId;
 
-    // Position offsets along Kodaikanal ghat route
-    const offsets = [
-      { latOff: 0.0000, lngOff: 0.0000, speed: 68.4, heading: 145, dist: '0.0 km', status: 'riding', battery: 92 },
-      { latOff: 0.0060, lngOff: 0.0040, speed: 65.0, heading: 142, dist: '0.8 km behind', status: 'riding', battery: 88 },
-      { latOff: 0.0240, lngOff: 0.0230, speed: 0.0, heading: 140, dist: '2.4 km behind', status: 'stopped', battery: 74, isSeparated: true },
-      { latOff: 0.0015, lngOff: 0.0015, speed: 66.2, heading: 144, dist: '0.3 km behind', status: 'riding', battery: 95 }
-    ];
-    const off = offsets[idx % offsets.length];
+    const existing = state.riders.find(r => r.id === profile.id);
+
+    let lat, lng;
+    if (isMe) {
+      lat = state.userGps?.lat ?? existing?.lat ?? m.last_lat ?? m.lastLat ?? (ride.start_lat || ride.startLat || 12.9716);
+      lng = state.userGps?.lng ?? existing?.lng ?? m.last_lng ?? m.lastLng ?? (ride.start_lng || ride.startLng || 77.5946);
+    } else {
+      lat = existing?.lat ?? m.last_lat ?? m.lastLat ?? (ride.start_lat ? (ride.start_lat + idx * 0.008) : 13.0827);
+      lng = existing?.lng ?? m.last_lng ?? m.lastLng ?? (ride.start_lng ? (ride.start_lng + idx * 0.008) : 80.2707);
+    }
+
+    let distStr = '0.0 km';
+    if (!isMe) {
+      const d = calculateDistanceKm(myLat, myLng, lat, lng);
+      if (d !== null) {
+        distStr = d >= 10 ? `${Math.round(d)} km away` : `${d.toFixed(1)} km away`;
+      }
+    }
 
     return {
       id: profile.id,
@@ -252,19 +285,19 @@ function syncRidersFromDb(ride) {
       phone: profile.phone,
       bike: profile.bikeModel,
       avatar: profile.avatar || profile.name[0],
-      avatarColor: profile.avatarColor || '#FF6B00',
+      avatarColor: profile.avatarColor || (isLead ? '#FF6B00' : '#00E5FF'),
       isMe,
       isLead,
-      role: m.role || 'rider',
-      lat: (ride.startLat || 10.2380) + off.latOff,
-      lng: (ride.startLng || 77.4890) + off.lngOff,
-      speed: off.speed,
-      heading: off.heading,
-      status: off.status,
-      distFromMe: isMe ? '0.0 km' : off.dist,
-      battery: off.battery,
-      lastSeen: 'Just now',
-      isSeparated: !!off.isSeparated
+      role: m.role || (isLead ? 'creator' : 'rider'),
+      lat,
+      lng,
+      speed: existing?.speed ?? (m.speed || 0),
+      heading: existing?.heading ?? (m.heading || 0),
+      status: existing?.status ?? (m.status || 'riding'),
+      distFromMe: isMe ? '0.0 km' : distStr,
+      battery: existing?.battery ?? (m.battery || 95),
+      lastSeen: existing?.lastSeen || (m.last_seen || 'Live'),
+      isSeparated: false
     };
   });
 }
@@ -1006,11 +1039,27 @@ const PayanamRealtime = (function () {
       console.warn('[Payanam WS] Realtime connection fallback:', e);
     }
 
-    // Polling fallback every 3s
+    // Polling fallback every 3s (syncs lobby and live peer locations)
     clearInterval(pollInterval);
-    pollInterval = setInterval(() => {
-      if (state.activeScreen === 'screenRideLobby' && state.currentRideId) {
+    pollInterval = setInterval(async () => {
+      if (!state.currentRideId) return;
+
+      if (state.activeScreen === 'screenRideLobby') {
         refreshLobbyData();
+      } else if (state.activeScreen === 'screenLiveMap') {
+        const apiBase = RideSyncDB.getApiBaseUrl();
+        try {
+          const res = await fetch(`${apiBase}/rides`);
+          if (res.ok) {
+            const rides = await res.json();
+            const current = rides.find(r => r.id === state.currentRideId);
+            if (current && current.members) {
+              syncRidersFromDb(current);
+              renderRiderMarkers();
+              renderRiderTelemetryCards();
+            }
+          }
+        } catch(e) {}
       }
     }, 3000);
   }
@@ -1068,6 +1117,67 @@ function handleRealtimeMessage(msg) {
     if (state.activeScreen === 'screenRideLobby') {
       showToast('🚀 Lead launched the ride! Entering live map cockpit...', 'success');
       startLiveRideSession();
+    }
+  } else if (msg.type === 'location_update') {
+    // Process real-time location update from peer rider
+    if (msg.userId && msg.userId !== activeUser.id && typeof msg.lat === 'number' && typeof msg.lng === 'number') {
+      let rider = (state.riders || []).find(r => r.id === msg.userId);
+      const myRider = (state.riders || []).find(r => r.isMe || r.id === activeUser.id);
+      const myLat = myRider?.lat || state.userGps?.lat;
+      const myLng = myRider?.lng || state.userGps?.lng;
+
+      let distStr = '';
+      if (myLat && myLng && msg.lat && msg.lng) {
+        const d = calculateDistanceKm(myLat, myLng, msg.lat, msg.lng);
+        if (d !== null) {
+          distStr = d >= 10 ? `${Math.round(d)} km away` : `${d.toFixed(1)} km away`;
+        }
+      }
+
+      if (rider) {
+        rider.lat = msg.lat;
+        rider.lng = msg.lng;
+        rider.speed = msg.speed !== undefined ? msg.speed : rider.speed;
+        rider.heading = msg.heading !== undefined ? msg.heading : rider.heading;
+        rider.battery = msg.battery !== undefined ? msg.battery : rider.battery;
+        rider.status = msg.status || 'riding';
+        rider.lastSeen = msg.lastSeen || 'Just now';
+        if (distStr) rider.distFromMe = distStr;
+      } else {
+        const profile = RideSyncDB.getProfile(msg.userId) || {
+          id: msg.userId,
+          name: msg.name || 'Rider',
+          bikeModel: 'Motorcycle',
+          avatar: (msg.name || 'R')[0],
+          avatarColor: '#00E5FF'
+        };
+
+        state.riders.push({
+          id: profile.id,
+          name: profile.name,
+          phone: profile.phone || '',
+          bike: profile.bikeModel,
+          avatar: profile.avatar || profile.name[0],
+          avatarColor: profile.avatarColor || '#00E5FF',
+          isMe: false,
+          isLead: false,
+          role: 'rider',
+          lat: msg.lat,
+          lng: msg.lng,
+          speed: msg.speed || 0,
+          heading: msg.heading || 0,
+          status: msg.status || 'riding',
+          distFromMe: distStr || 'Connected',
+          battery: msg.battery || 95,
+          lastSeen: 'Just now',
+          isSeparated: false
+        });
+
+        showToast(`📍 Peer location received from ${msg.name || 'Rider'} (${distStr})`, 'info');
+      }
+
+      renderRiderMarkers();
+      renderRiderTelemetryCards();
     }
   }
 }
@@ -1138,6 +1248,118 @@ function shareViaWhatsApp() {
 }
 
 // -------------------------------------------------------------
+// LIVE GPS BROADCAST & MULTI-RIDER REALTIME TELEMETRY
+// -------------------------------------------------------------
+let lastTelemetryBroadcastTime = 0;
+
+function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
+  const activeUser = RideSyncDB.getActiveUser();
+  const currentRide = state.currentRide || RideSyncDB.getRides()[0];
+  if (!activeUser || typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
+
+  state.userGps = { lat, lng, speed, heading };
+
+  // Update my rider coordinates in state.riders
+  let myRider = (state.riders || []).find(r => r.isMe || r.id === activeUser.id);
+  if (myRider) {
+    myRider.lat = lat;
+    myRider.lng = lng;
+    myRider.speed = speed || 0;
+    myRider.heading = heading || 0;
+    myRider.lastSeen = 'Just now';
+  }
+
+  // Recalculate distance from me to all other riders
+  (state.riders || []).forEach(r => {
+    if (!r.isMe && typeof r.lat === 'number' && typeof r.lng === 'number') {
+      const d = calculateDistanceKm(lat, lng, r.lat, r.lng);
+      if (d !== null) {
+        r.distFromMe = d >= 10 ? `${Math.round(d)} km away` : `${d.toFixed(1)} km away`;
+      }
+    }
+  });
+
+  renderRiderMarkers();
+  renderRiderTelemetryCards();
+
+  const now = Date.now();
+  if (now - lastTelemetryBroadcastTime > 2000) {
+    lastTelemetryBroadcastTime = now;
+
+    const payload = {
+      type: 'location_update',
+      rideId: currentRide?.id,
+      userId: activeUser.id,
+      name: activeUser.name,
+      lat,
+      lng,
+      speed: Math.round(speed || 0),
+      heading: Math.round(heading || 0),
+      battery: 95,
+      status: (speed || 0) > 2 ? 'riding' : 'stopped'
+    };
+
+    // 1. Broadcast over WebSocket to peer riders
+    PayanamRealtime.broadcast(payload);
+
+    // 2. Persist to server SQLite database
+    if (currentRide?.id) {
+      RideSyncDB.sendRiderTelemetry(currentRide.id, payload);
+    }
+  }
+}
+
+function startLiveGpsBroadcast() {
+  if (navigator.geolocation) {
+    // Immediate one-shot fix
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const speed = pos.coords.speed ? Math.max(0, pos.coords.speed * 3.6) : 0;
+        broadcastMyLiveLocation(pos.coords.latitude, pos.coords.longitude, speed, pos.coords.heading || 0);
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+
+    // Continuous GPS watch
+    PayanamMaps.startLiveGpsTracking(
+      state.map,
+      (pos) => {
+        broadcastMyLiveLocation(pos.lat, pos.lng, pos.speed || 0, pos.heading || 0);
+
+        const speedEl = document.getElementById('navCurrentSpeed');
+        if (speedEl) speedEl.innerText = `${Math.round(pos.speed || 0)} km/h`;
+      },
+      (errMsg) => {
+        console.warn('GPS watch notice:', errMsg);
+      }
+    );
+
+    const label = document.getElementById('gpsStatusLabel');
+    const icon = document.getElementById('gpsBtnIcon');
+    if (label) label.innerText = 'LIVE GPS 🛰️';
+    if (icon) icon.innerText = '🟢';
+  }
+}
+
+// Fit map viewport to encompass all riders (e.g. Bangalore & Chennai)
+function fitAllRidersInView() {
+  if (!state.map || !state.riders || state.riders.length === 0) return;
+  const validCoords = state.riders
+    .filter(r => typeof r.lat === 'number' && typeof r.lng === 'number' && !isNaN(r.lat) && !isNaN(r.lng))
+    .map(r => [r.lat, r.lng]);
+
+  if (validCoords.length === 1) {
+    state.map.setView(validCoords[0], 14);
+    showToast(`🎯 Centered on ${state.riders[0].name}`, 'info');
+  } else if (validCoords.length > 1) {
+    const bounds = L.latLngBounds(validCoords);
+    state.map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15, animate: true });
+    showToast(`👥 Formation: Viewing all ${validCoords.length} riders across locations`, 'info');
+  }
+}
+
+// -------------------------------------------------------------
 // LIVE MAP ENGINE (Leaflet & Telemetry Simulation)
 // -------------------------------------------------------------
 async function initOrUpdateLiveMap() {
@@ -1145,8 +1367,13 @@ async function initOrUpdateLiveMap() {
   if (!mapContainer) return;
 
   const ride = state.currentRide || PayanamDB.getRides()[0];
-  const centerLat = ride.waypoints?.[0]?.lat || 10.2380;
-  const centerLng = ride.waypoints?.[0]?.lng || 77.4890;
+  const centerLat = ride.waypoints?.[0]?.lat || ride.start_lat || 12.9716;
+  const centerLng = ride.waypoints?.[0]?.lng || ride.start_lng || 77.5946;
+
+  // Connect WebSocket channel for this live ride
+  if (ride && ride.id) {
+    PayanamRealtime.connect(ride.id);
+  }
 
   if (!state.map) {
     state.map = L.map('liveRideMap', {
@@ -1154,7 +1381,7 @@ async function initOrUpdateLiveMap() {
       attributionControl: false,
       fadeAnimation: true,
       zoomAnimation: true
-    }).setView([centerLat, centerLng], 13);
+    }).setView([centerLat, centerLng], 12);
 
     // Attach active Tile Layer (Google Maps RoadMap by default)
     const cfg = PayanamDB.getMapConfig();
@@ -1189,17 +1416,20 @@ async function initOrUpdateLiveMap() {
   renderMapWaypoints(ride.waypoints || []);
   renderMapPins(ride.pins || []);
 
-  // Render Live Riders & Start Telemetry
+  // Render Live Riders & Start Live Telemetry Broadcast
   renderRiderMarkers();
   renderRiderTelemetryCards();
-  if (!PayanamMaps.isGpsActive()) {
-    startTelemetrySimulation();
-  }
+  startLiveGpsBroadcast();
 
-  // Ensure leaflet recalculates dimensions immediately
+  // If multiple riders are present, automatically fit bounds
   setTimeout(() => {
-    try { state.map.invalidateSize(); } catch(e) {}
-  }, 100);
+    try { 
+      state.map.invalidateSize();
+      if (state.riders && state.riders.length > 1) {
+        fitAllRidersInView();
+      }
+    } catch(e) {}
+  }, 300);
 
   // Fetch precision OSRM Road Geometry in the background (non-blocking)
   if (ride.waypoints && ride.waypoints.length >= 2) {
@@ -1274,34 +1504,8 @@ function toggleDeviceGps() {
   const icon = document.getElementById('gpsBtnIcon');
 
   if (!PayanamMaps.isGpsActive()) {
-    const success = PayanamMaps.startLiveGpsTracking(state.map, (pos) => {
-      // Update my rider coordinates in real-time
-      if (state.riders[0]) {
-        state.riders[0].lat = pos.lat;
-        state.riders[0].lng = pos.lng;
-        state.riders[0].speed = pos.speed || 0;
-        state.riders[0].heading = pos.heading || 0;
-        renderRiderMarkers();
-        renderRiderTelemetryCards();
-      }
-
-      const speedEl = document.getElementById('navCurrentSpeed');
-      if (speedEl) speedEl.innerText = `${Math.round(pos.speed)} km/h`;
-
-      // Recenter on device GPS
-      if (state.map) {
-        state.map.panTo([pos.lat, pos.lng]);
-      }
-    }, (errMsg) => {
-      showToast(`⚠️ GPS Error: ${errMsg}`, 'error');
-    });
-
-    if (success) {
-      clearInterval(state.simInterval);
-      if (label) label.innerText = 'LIVE GPS 🛰️';
-      if (icon) icon.innerText = '🟢';
-      showToast('🛰️ Connected to Live Device GPS Hardware!', 'success');
-    }
+    startLiveGpsBroadcast();
+    showToast('🛰️ Connected to Live Device GPS Hardware!', 'success');
   } else {
     PayanamMaps.stopLiveGpsTracking(state.map);
     if (label) label.innerText = 'LIVE SIM';
