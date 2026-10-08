@@ -32,10 +32,122 @@ const RideSyncDB = (function () {
 
   let isServerConnected = false;
 
-  // Clean Sandbox Baseline (0 test accounts, 0 test rides)
+  // Default test data for development (remove in production)
   const defaultDatabase = {
-    profiles: [],
-    rides: []
+    profiles: [
+      {
+        id: 'usr-bose',
+        name: 'Bose',
+        phone: '9876543210',
+        phoneFormatted: '+91 98765 43210',
+        avatar: 'B',
+        avatarColor: '#FF6B00',
+        bikeModel: 'Royal Enfield Interceptor 650',
+        bloodGroup: 'O+ve',
+        emergencyContactName: 'Emergency Contact',
+        emergencyContactPhone: '9876543210',
+        ridesCount: 12,
+        totalKm: 2450,
+        roleDefault: 'Rider'
+      },
+      {
+        id: 'usr-rider2',
+        name: 'Alex Kumar',
+        phone: '9988776655',
+        phoneFormatted: '+91 99887 76655',
+        avatar: 'A',
+        avatarColor: '#00E5FF',
+        bikeModel: 'Bajaj Dominar 400',
+        bloodGroup: 'B+ve',
+        emergencyContactName: 'Mom',
+        emergencyContactPhone: '9988776655',
+        ridesCount: 8,
+        totalKm: 1850,
+        roleDefault: 'Rider'
+      },
+      {
+        id: 'usr-rider3',
+        name: 'Sarah Johnson',
+        phone: '9123456789',
+        phoneFormatted: '+91 91234 56789',
+        avatar: 'S',
+        avatarColor: '#00E676',
+        bikeModel: 'Honda CB350',
+        bloodGroup: 'A+ve',
+        emergencyContactName: 'Dad',
+        emergencyContactPhone: '9123456789',
+        ridesCount: 15,
+        totalKm: 3200,
+        roleDefault: 'Rider'
+      }
+    ],
+    rides: [
+      {
+        id: 'ride-kodai-2026',
+        code: 'KODAI26',
+        name: 'Bangalore to Kodaikanal Weekend Ride',
+        date: '2026-10-12',
+        time: '06:00',
+        status: 'lobby',
+        creatorId: 'usr-bose',
+        creator_id: 'usr-bose',
+        startAddress: 'Bangalore, Silk Board',
+        startLat: 12.9176,
+        startLng: 77.6233,
+        start_lat: 12.9176,
+        start_lng: 77.6233,
+        destAddress: 'Kodaikanal, Pillar Rocks',
+        destLat: 10.2185,
+        destLng: 77.4682,
+        dest_lat: 10.2185,
+        dest_lng: 77.4682,
+        distanceKm: 324.8,
+        durationHours: 8.5,
+        members: [
+          { userId: 'usr-bose', user_id: 'usr-bose', role: 'creator', status: 'ready', isLead: true },
+          { userId: 'usr-rider2', user_id: 'usr-rider2', role: 'rider', status: 'ready' }
+        ],
+        waypoints: [
+          { id: 1, name: 'Bangalore, Silk Board', type: 'start', lat: 12.9176, lng: 77.6233 },
+          { id: 2, name: 'Salem, Tea Stall', type: 'stop', lat: 12.0658, lng: 78.1458 },
+          { id: 3, name: 'Coimbatore, Lunch Stop', type: 'stop', lat: 11.0026, lng: 76.9969 },
+          { id: 999, name: 'Kodaikanal, Pillar Rocks', type: 'destination', lat: 10.2185, lng: 77.4682 }
+        ],
+        pins: []
+      },
+      {
+        id: 'ride-ooty-2026',
+        code: 'OOTY26',
+        name: 'Chennai to Ooty Hill Station Adventure',
+        date: '2026-10-15',
+        time: '07:00',
+        status: 'planned',
+        creatorId: 'usr-rider2',
+        creator_id: 'usr-rider2',
+        startAddress: 'Chennai, Marina Beach',
+        startLat: 13.0499,
+        startLng: 80.2824,
+        start_lat: 13.0499,
+        start_lng: 80.2824,
+        destAddress: 'Ooty, Botanical Garden',
+        destLat: 11.4069,
+        destLng: 76.7114,
+        dest_lat: 11.4069,
+        dest_lng: 76.7114,
+        distanceKm: 286.5,
+        durationHours: 7.2,
+        members: [
+          { userId: 'usr-rider2', user_id: 'usr-rider2', role: 'creator', status: 'ready', isLead: true },
+          { userId: 'usr-rider3', user_id: 'usr-rider3', role: 'rider', status: 'ready' }
+        ],
+        waypoints: [
+          { id: 1, name: 'Chennai, Marina Beach', type: 'start', lat: 13.0499, lng: 80.2824 },
+          { id: 2, name: 'Krishnagiri, Fuel Stop', type: 'stop', lat: 12.5057, lng: 78.9076 },
+          { id: 999, name: 'Ooty, Botanical Garden', type: 'destination', lat: 11.4069, lng: 76.7114 }
+        ],
+        pins: []
+      }
+    ]
   };
 
   function cleanDigits(phone) {
