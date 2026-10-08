@@ -750,15 +750,25 @@ const GoogleMapsStyleUI = (function () {
     });
 
     document.getElementById('gmBtnRecenter')?.addEventListener('click', () => {
-      if (window.recenterOnGroup) {
+      // Zoom back to street-level on rider
+      const mapInstance = window.map || window.leafletMap;
+      if (window.NavigationEngine) {
+        window.NavigationEngine.recenterOnRider(mapInstance);
+      } else if (window.recenterOnGroup) {
         window.recenterOnGroup(false);
       }
+      showAlert('Recentered', 'Zoomed to street-level view', 'success');
     });
 
     document.getElementById('gmBtnOverview')?.addEventListener('click', () => {
-      if (window.fitAllRidersInView) {
+      // Show route overview (zoomed out)
+      const mapInstance = window.map || window.leafletMap;
+      if (window.NavigationEngine) {
+        window.NavigationEngine.showRoute(mapInstance);
+      } else if (window.fitAllRidersInView) {
         window.fitAllRidersInView();
       }
+      showAlert('Route Overview', 'Showing full route', 'success');
     });
   }
 

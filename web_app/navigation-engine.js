@@ -25,6 +25,17 @@ const NavigationEngine = (function () {
     // Initialize Google Maps-style UI
     GoogleMapsStyleUI.startNavigation(route);
 
+    // Set map to street-level view (like Google Maps navigation)
+    if (mapInstance) {
+      // Zoom in close: level 18-19 for street details
+      mapInstance.setZoom(18);
+
+      // Enable map follower mode (map follows rider)
+      if (mapInstance.dragging) {
+        mapInstance.dragging.disable(); // Disable manual dragging
+      }
+    }
+
     // Start high-accuracy GPS tracking
     gpsTracker = HighAccuracyGPS.startHighAccuracyTracking(
       (position) => onPositionUpdate(position, route, mapInstance),
@@ -32,7 +43,7 @@ const NavigationEngine = (function () {
     );
 
     isNavigating = true;
-    console.log('[Navigation Engine] Journey started');
+    console.log('[Navigation Engine] Journey started - Street-level zoom (18)');
 
     return true;
   }
@@ -51,6 +62,22 @@ const NavigationEngine = (function () {
 
     // Update navigation UI with accurate position
     GoogleMapsStyleUI.updatePositionAccurate(finalPos.lat, finalPos.lng, accuracy);
+
+    // Keep map centered on rider (Google Maps-style follower mode)
+    if (mapInstance) {
+      // Smooth pan/follow the rider
+      mapInstance.panTo([finalPos.lat, finalPos.lng]);
+
+      // Rotate map based on heading (optional, comment out if not wanted)
+      if (mapInstance.setBearing) {
+        mapInstance.setBearing(heading);
+      }
+
+      // Ensure zoom stays at street level
+      if (mapInstance.getZoom() < 17) {
+        mapInstance.setZoom(18);
+      }
+    }
 
     // Update map with smooth animation
     if (mapInstance && RideSyncEnhancements) {
@@ -127,6 +154,31 @@ const NavigationEngine = (function () {
     console.log('[Navigation Engine] Journey ended');
   }
 
+  // ===== ZOOM & VIEW CONTROL =====
+
+  function zoomToStreetLevel(mapInstance) {
+    if (mapInstance) {
+      mapInstance.setZoom(18); // Street-level detail zoom
+      if (mapInstance.dragging) mapInstance.dragging.disable();
+    }
+  }
+
+  function zoomToOverview(mapInstance, route) {
+    if (mapInstance && route) {
+      mapInstance.fitBounds(HighAccuracyGPS.calculateRouteBounds(route));
+      if (mapInstance.dragging) mapInstance.dragging.enable();
+    }
+  }
+
+  function recenterOnRider(mapInstance) {
+    const pos = HighAccuracyGPS.getLastValidPosition();
+    if (mapInstance && pos) {
+      mapInstance.panTo([pos.lat, pos.lng]);
+      mapInstance.setZoom(18);
+      if (mapInstance.dragging) mapInstance.dragging.disable();
+    }
+  }
+
   // ===== ROUTE MANAGEMENT =====
 
   function updateRoute(newRoute) {
@@ -167,9 +219,17 @@ const NavigationEngine = (function () {
     getGPSPosition: () => HighAccuracyGPS?.getLastValidPosition?.(),
     enableHighAccuracy: () => true, // High accuracy is default
     toggleVoice: () => GoogleMapsStyleUI?.toggleVoice?.(),
-    showRoute: () => {
-      // Show route overview
-      if (window.fitAllRidersInView) window.fitAllRidersInView();
+    showRoute: (mapInstance) => {
+      // Show route overview (zoomed out)
+      zoomToOverview(mapInstance, currentRoute);
+    },
+    recenterOnRider: (mapInstance) => {
+      // Zoom back to street-level on rider
+      recenterOnRider(mapInstance);
+    },
+    zoomToStreetLevel: (mapInstance) => {
+      // Zoom to street-level detail
+      zoomToStreetLevel(mapInstance);
     }
   };
 })();
