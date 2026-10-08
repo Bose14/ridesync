@@ -1408,13 +1408,13 @@ function shareViaWhatsApp() {
 // -------------------------------------------------------------
 let lastTelemetryBroadcastTime = 0;
 
-function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
+function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0, battery = 100) {
   const db = window.RideSyncDB || window.PayanamDB;
   const activeUser = db ? db.getActiveUser() : null;
   const currentRide = state.currentRide || (db ? db.getRides()[0] : null);
   if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
 
-  state.userGps = { lat, lng, speed: Math.round(speed || 0), heading: Math.round(heading || 0) };
+  state.userGps = { lat, lng, speed: Math.round(speed || 0), heading: Math.round(heading || 0), battery };
 
   // Update my rider coordinates in state.riders
   state.riders = state.riders || [];
@@ -1439,7 +1439,7 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
       lng: lng,
       speed: Math.max(0, speed || 0),
       heading: Math.round(heading || 0),
-      battery: 95,
+      battery: Math.round(battery || 100),
       status: (speed || 0) > 2 ? 'riding' : 'stopped',
       lastSeen: 'Just now'
     };
@@ -1483,7 +1483,7 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
       lng,
       speed: Math.round(speed || 0),
       heading: Math.round(heading || 0),
-      battery: 95,
+      battery: Math.round(battery || 100),
       status: (speed || 0) > 2 ? 'riding' : 'stopped'
     };
 

@@ -11,8 +11,35 @@ const HighAccuracyGPS = (function () {
   let lastValidPosition = null;
   let speedHistory = [];
   let headingHistory = [];
+  let lastBatteryLevel = 100;
   const MAX_HISTORY = 20;
   const POSITION_TIMEOUT = 5000; // 5 seconds
+
+  // ===== DEVICE BATTERY (Real device battery percentage) =====
+
+  async function getDeviceBattery() {
+    try {
+      if (navigator.getBattery) {
+        const battery = await navigator.getBattery();
+        lastBatteryLevel = Math.round(battery.level * 100);
+        return lastBatteryLevel;
+      }
+    } catch (e) {}
+    return lastBatteryLevel;
+  }
+
+  // Monitor battery changes in real-time
+  function initBatteryMonitoring() {
+    try {
+      if (navigator.getBattery) {
+        navigator.getBattery().then(battery => {
+          battery.addEventListener('levelchange', () => {
+            lastBatteryLevel = Math.round(battery.level * 100);
+          });
+        });
+      }
+    } catch (e) {}
+  }
 
   // ===== ROAD SNAPPING (Improve accuracy on known routes) =====
 
@@ -129,6 +156,10 @@ const HighAccuracyGPS = (function () {
     isHighAccuracyMode = true;
     let lastUpdateTime = Date.now();
 
+    // Initialize battery monitoring
+    initBatteryMonitoring();
+    getDeviceBattery();
+
     if (!navigator.geolocation) {
       onError('Geolocation not supported');
       return false;
@@ -237,11 +268,12 @@ const HighAccuracyGPS = (function () {
       speed: validatedSpeed,
       heading: validatedHeading,
       accuracy,
+      battery: lastBatteryLevel,
       confidence: 1 - (accuracy / 100),
       timestamp: Date.now()
     };
 
-    // Callback with high-accuracy position
+    // Callback with high-accuracy position + device battery
     if (callback) {
       callback({
         lat,
@@ -249,6 +281,7 @@ const HighAccuracyGPS = (function () {
         speed: Math.round(validatedSpeed),
         heading: Math.round(validatedHeading),
         accuracy: Math.round(accuracy),
+        battery: lastBatteryLevel,
         confidence: Math.round(lastValidPosition.confidence * 100) / 100,
         source: 'high-accuracy-gps'
       });

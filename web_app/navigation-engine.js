@@ -51,7 +51,7 @@ const NavigationEngine = (function () {
   function onPositionUpdate(position, route, mapInstance) {
     if (!isNavigating) return;
 
-    const { lat, lng, speed, heading, accuracy, confidence } = position;
+    const { lat, lng, speed, heading, accuracy, battery, confidence } = position;
 
     // Apply road snapping if on known route
     const snappedPos = GoogleMapsStyleUI ?
@@ -92,9 +92,9 @@ const NavigationEngine = (function () {
       );
     }
 
-    // Broadcast to group if in live ride
+    // Broadcast to group if in live ride (with real device battery)
     if (window.broadcastMyLiveLocation) {
-      window.broadcastMyLiveLocation(finalPos.lat, finalPos.lng, speed, heading);
+      window.broadcastMyLiveLocation(finalPos.lat, finalPos.lng, speed, heading, battery);
     }
 
     // Check for upcoming turns and predictions
