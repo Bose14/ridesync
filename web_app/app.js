@@ -38,12 +38,71 @@ document.addEventListener('DOMContentLoaded', () => {
   renderHistoryScreen();
   renderSidePanelAccounts();
 
-  // Check if URL has ?join=CODE
-  checkUrlJoinParameter();
+  // Restore active ride session from URL parameter or localStorage on refresh
+  restoreSavedRideStateFromUrlOrStorage();
 
   // Always request Location & Notification permissions on launch
   requestPermissionsOnLaunch();
 });
+
+// URL & Session State Synchronization
+function updateUrlAndSessionState(screenId, ride) {
+  const code = ride?.code || '';
+  if (screenId === 'screenLiveMap' && code) {
+    window.history.replaceState({ screen: 'live', ride: code }, '', `?screen=live&ride=${code}`);
+    localStorage.setItem('ridesync_active_ride_code', code);
+    localStorage.setItem('ridesync_active_screen', 'screenLiveMap');
+  } else if (screenId === 'screenRideLobby' && code) {
+    window.history.replaceState({ screen: 'lobby', ride: code }, '', `?screen=lobby&ride=${code}`);
+    localStorage.setItem('ridesync_active_ride_code', code);
+    localStorage.setItem('ridesync_active_screen', 'screenRideLobby');
+  } else if (screenId === 'screenHome') {
+    window.history.replaceState({ screen: 'home' }, '', window.location.pathname);
+    localStorage.removeItem('ridesync_active_screen');
+  } else if (screenId === 'screenHistory' || screenId === 'screenCreateRide' || screenId === 'screenRideSummary') {
+    window.history.replaceState({ screen: screenId }, '', window.location.pathname);
+  }
+}
+
+function restoreSavedRideStateFromUrlOrStorage() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const joinCode = urlParams.get('join');
+  const rideCode = urlParams.get('ride') || urlParams.get('code') || localStorage.getItem('ridesync_active_ride_code');
+  const requestedScreen = urlParams.get('screen') || localStorage.getItem('ridesync_active_screen');
+
+  if (joinCode) {
+    checkUrlJoinParameter();
+    return;
+  }
+
+  if (rideCode) {
+    const rides = RideSyncDB.getRides();
+    const ride = rides.find(r => (r.code && r.code.toUpperCase() === rideCode.toUpperCase()) || r.id === rideCode);
+    if (ride) {
+      state.currentRide = ride;
+      state.currentRideId = ride.id;
+      const activeUser = RideSyncDB.getActiveUser();
+      const isMember = (ride.members || []).some(m => (m.userId || m.user_id) === activeUser?.id);
+      const isLead = ride.creator_id === activeUser?.id || ride.creatorId === activeUser?.id;
+
+      if (isMember || isLead) {
+        if (ride.status === 'active' || requestedScreen === 'screenLiveMap' || requestedScreen === 'live') {
+          console.log(`[Payanam] Restoring active live ride session for: ${ride.name}`);
+          setTimeout(() => {
+            startLiveRideSession();
+          }, 300);
+          return;
+        } else if (ride.status === 'lobby' || requestedScreen === 'screenRideLobby' || requestedScreen === 'lobby') {
+          console.log(`[Payanam] Restoring ride lobby for: ${ride.name}`);
+          setTimeout(() => {
+            navigateTo('screenRideLobby');
+          }, 300);
+          return;
+        }
+      }
+    }
+  }
+}
 
 function checkUrlJoinParameter() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -58,13 +117,18 @@ function checkUrlJoinParameter() {
             state.currentRideId = res.ride.id;
             state.currentRide = res.ride;
             PayanamRealtime.connect(res.ride.id);
-            navigateTo('screenRideLobby');
+
             if (res.status === 'pending') {
+              navigateTo('screenRideLobby');
               const leadProfile = RideSyncDB.getProfile(res.ride.creator_id || res.ride.creatorId);
               const leadNameEl = document.getElementById('pendingLeadName');
               if (leadNameEl) leadNameEl.innerText = leadProfile ? leadProfile.name : 'Ride Lead';
               openModal('modalJoinRequestStatus');
+            } else if (res.ride?.status === 'active') {
+              showToast('🚀 Joined active ride! Launching cockpit...', 'success');
+              startLiveRideSession();
             } else {
+              navigateTo('screenRideLobby');
               showToast(`🏍️ ${res.message || 'Joined ride lobby!'}`, 'success');
             }
           } else {
@@ -311,6 +375,9 @@ function navigateTo(screenId) {
   if (target) target.classList.add('active');
   state.activeScreen = screenId;
 
+  // Sync URL and LocalStorage session state
+  updateUrlAndSessionState(screenId, state.currentRide);
+
   // Update bottom nav active state
   document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
   if (screenId === 'screenHome') document.getElementById('navHome')?.classList.add('active');
@@ -362,9 +429,9 @@ function renderHomeScreen() {
   const statRides = document.getElementById('statGroupRides');
   if (statRides) statRides.innerText = activeUser.ridesCount || 0;
 
-  // Active Rides from DB
+  // Active & In-Progress Rides from DB (visible until ride ends)
   const rides = RideSyncDB.getRides();
-  const activeRides = rides.filter(r => r.status === 'active' || r.status === 'planned');
+  const activeRides = rides.filter(r => r.status === 'active' || r.status === 'lobby' || r.status === 'planned');
   const pastRides = rides.filter(r => r.status === 'completed');
 
   const activeCountBadge = document.getElementById('badgeActiveCount');
@@ -379,47 +446,58 @@ function renderHomeScreen() {
           <button class="btn btn-primary" onclick="navigateTo('screenCreateRide')">+ Create a New Ride</button>
         </div>`;
     } else {
-      activeContainer.innerHTML = activeRides.map(ride => `
-        <div class="ride-card active-ride-card" onclick="selectAndOpenRide('${ride.id}')">
-          <div class="ride-card-header">
-            <div>
-              <span class="ride-tag upcoming">Starts Soon · ${ride.date || 'Today'}</span>
-              <h3 class="ride-name">${ride.name}</h3>
-            </div>
-            <span class="ride-code-badge">${ride.code}</span>
-          </div>
-          
-          <div class="ride-route-summary">
-            <div class="route-point">
-              <span class="dot start"></span>
-              <span>${ride.startAddress || 'Start Point'}</span>
-            </div>
-            <div class="route-line-connector"></div>
-            <div class="route-point">
-              <span class="dot end"></span>
-              <span>${ride.destAddress || 'Destination'}</span>
-            </div>
-          </div>
+      activeContainer.innerHTML = activeRides.map(ride => {
+        const isLive = ride.status === 'active';
+        const isLobby = ride.status === 'lobby';
 
-          <div class="ride-card-footer">
-            <div class="rider-avatar-stack">
-              ${(ride.members || []).map(m => {
-                const p = RideSyncDB.getProfile(m.userId);
-                return `<div class="avatar-sm" style="background:${p?.avatarColor || '#FF6B00'}" title="${p?.name || 'Rider'}">${p?.avatar || p?.name?.[0] || 'R'}</div>`;
-              }).join('')}
-              <span class="rider-count-text">${ride.members?.length || 1} Riders Joined</span>
+        return `
+          <div class="ride-card active-ride-card ${isLive ? 'is-live-card' : ''}" onclick="selectAndOpenRide('${ride.id}')">
+            <div class="ride-card-header">
+              <div>
+                ${isLive ? `
+                  <span class="ride-tag live-pulsing" style="background:rgba(0,230,118,0.18); color:#00E676; border:1px solid rgba(0,230,118,0.4); font-weight:800; display:inline-flex; align-items:center; gap:6px;">
+                    <span class="status-pulse-dot" style="background:#00E676;"></span> 🟢 LIVE IN PROGRESS
+                  </span>
+                ` : `
+                  <span class="ride-tag upcoming">🏍️ Lobby Open · ${ride.date || 'Today'}</span>
+                `}
+                <h3 class="ride-name" style="margin-top:6px;">${ride.name}</h3>
+              </div>
+              <span class="ride-code-badge">${ride.code}</span>
             </div>
-            <div class="ride-meta">
-              <span>📍 ${ride.distanceKm || 320} km</span>
-              <span>⏱️ ~${ride.durationHours || 8} hrs</span>
+            
+            <div class="ride-route-summary">
+              <div class="route-point">
+                <span class="dot start"></span>
+                <span>${ride.startAddress || 'Start Point'}</span>
+              </div>
+              <div class="route-line-connector"></div>
+              <div class="route-point">
+                <span class="dot end"></span>
+                <span>${ride.destAddress || 'Destination'}</span>
+              </div>
             </div>
-          </div>
 
-          <button class="btn-enter-lobby" onclick="event.stopPropagation(); selectAndOpenRide('${ride.id}'); startLiveRideSession();">
-            ENTER LIVE RIDE ⚡
-          </button>
-        </div>
-      `).join('');
+            <div class="ride-card-footer">
+              <div class="rider-avatar-stack">
+                ${(ride.members || []).map(m => {
+                  const p = RideSyncDB.getProfile(m.userId || m.user_id);
+                  return `<div class="avatar-sm" style="background:${p?.avatarColor || '#FF6B00'}" title="${p?.name || 'Rider'}">${p?.avatar || p?.name?.[0] || 'R'}</div>`;
+                }).join('')}
+                <span class="rider-count-text">${ride.members?.length || 1} Riders Joined</span>
+              </div>
+              <div class="ride-meta">
+                <span>📍 ${ride.distanceKm || 0} km</span>
+                <span>⏱️ ~${ride.durationHours || 1} hrs</span>
+              </div>
+            </div>
+
+            <button class="btn-enter-lobby" style="${isLive ? 'background:var(--primary-orange); box-shadow:0 4px 14px rgba(255,107,0,0.4);' : ''}" onclick="event.stopPropagation(); selectAndOpenRide('${ride.id}');">
+              ${isLive ? 'ENTER LIVE COCKPIT ⚡' : 'OPEN RIDE LOBBY 🏍️'}
+            </button>
+          </div>
+        `;
+      }).join('');
     }
   }
 
@@ -443,7 +521,12 @@ function renderHomeScreen() {
 
 function selectAndOpenRide(rideId) {
   loadCurrentRideFromDb(rideId);
-  navigateTo('screenRideLobby');
+  const ride = state.currentRide || RideSyncDB.getRide(rideId);
+  if (ride && ride.status === 'active') {
+    startLiveRideSession();
+  } else {
+    navigateTo('screenRideLobby');
+  }
 }
 
 function selectAndOpenSummary(rideId) {
@@ -1158,6 +1241,12 @@ function handleRealtimeMessage(msg) {
       showToast('🚀 Lead launched the ride! Entering live map cockpit...', 'success');
       startLiveRideSession();
     }
+  } else if (msg.type === 'ride_ended') {
+    showToast('🏁 The Ride Lead has completed the ride!', 'info');
+    if (state.currentRide) state.currentRide.status = 'completed';
+    localStorage.removeItem('ridesync_active_screen');
+    renderRideSummary();
+    navigateTo('screenRideSummary');
   } else if (msg.type === 'location_update') {
     // Process real-time location update from peer rider
     if (msg.userId && msg.userId !== activeUser.id && typeof msg.lat === 'number' && typeof msg.lng === 'number') {
@@ -1873,11 +1962,27 @@ function toggleSheetExpand() {
   }
 }
 
-function confirmExitRide() {
-  if (confirm('End live riding session and view ride summary?')) {
-    renderRideSummary();
-    navigateTo('screenRideSummary');
+async function confirmExitRide() {
+  const activeUser = RideSyncDB.getActiveUser();
+  const ride = state.currentRide;
+  const isLead = ride && (ride.creator_id === activeUser?.id || ride.creatorId === activeUser?.id);
+
+  if (isLead) {
+    const choice = confirm('🏁 As Ride Lead, do you want to END & COMPLETE this ride for all riders?\n\n• OK: Complete ride and conclude group session\n• Cancel: Go to home screen while ride stays active');
+    if (choice) {
+      await RideSyncDB.endLiveRide(ride.id, activeUser.id);
+      PayanamRealtime.broadcast({ type: 'ride_ended', rideId: ride.id, status: 'completed' });
+      localStorage.removeItem('ridesync_active_ride_code');
+      localStorage.removeItem('ridesync_active_screen');
+      showToast('🏁 Ride completed successfully!', 'success');
+      renderRideSummary();
+      navigateTo('screenRideSummary');
+      return;
+    }
   }
+
+  // Go to home screen while ride stays active in Active Rides
+  navigateTo('screenHome');
 }
 
 // -------------------------------------------------------------
