@@ -1226,6 +1226,17 @@ body {
   background: #111827;
 }
 
+/* Google Maps 3D Cockpit Ride Perspective */
+.map-viewport.cockpit-3d-active .leaflet-map-pane {
+  transform: perspective(650px) rotateX(28deg) scale(1.06);
+  transform-origin: 50% 82%;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.map-viewport.cockpit-3d-active .leaflet-tile-container {
+  image-rendering: -webkit-optimize-contrast;
+}
+
 /* Non-Intrusive Floating Box Notification Cards (Does Not Hide Map) */
 .live-alerts-container {
   position: absolute;
@@ -1753,6 +1764,27 @@ body {
 
 .btn-float-hud.btn-hud-sos:hover {
   background: var(--accent-red);
+}
+
+.btn-float-hud.active-follow {
+  background: rgba(0, 229, 255, 0.22) !important;
+  border-color: #00E5FF !important;
+  color: #00E5FF !important;
+  box-shadow: 0 0 16px rgba(0, 229, 255, 0.45) !important;
+}
+
+.btn-float-hud.needs-recenter {
+  background: rgba(255, 107, 0, 0.95) !important;
+  border-color: #FF6B00 !important;
+  color: #FFF !important;
+  box-shadow: 0 0 20px rgba(255, 107, 0, 0.8) !important;
+  animation: pulse-recenter 1.8s infinite;
+}
+
+@keyframes pulse-recenter {
+  0% { transform: translateY(0) scale(1); box-shadow: 0 0 10px rgba(255, 107, 0, 0.6); }
+  50% { transform: translateY(-2px) scale(1.04); box-shadow: 0 0 24px rgba(255, 107, 0, 0.95); }
+  100% { transform: translateY(0) scale(1); box-shadow: 0 0 10px rgba(255, 107, 0, 0.6); }
 }
 
 .btn-float-chat {
@@ -2353,6 +2385,43 @@ body {
 @keyframes radar-pulse {
   0% { transform: scale(0.6); opacity: 1; }
   100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Google Maps Style Navigation Directional Beam & Cone */
+.nav-beam-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition: transform 0.3s ease;
+  z-index: -1;
+}
+
+.nav-heading-cone {
+  position: absolute;
+  bottom: 12px;
+  left: -32px;
+  width: 64px;
+  height: 60px;
+  background: radial-gradient(ellipse at 50% 100%, rgba(0, 229, 255, 0.6) 0%, rgba(0, 229, 255, 0.18) 50%, transparent 80%);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.7));
+}
+
+.nav-heading-arrow {
+  position: absolute;
+  bottom: 24px;
+  left: -6px;
+  width: 12px;
+  height: 12px;
+  color: #00E5FF;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  font-weight: 900;
+  filter: drop-shadow(0 0 4px #00E5FF);
 }
 
 .marker-emergency .marker-pin {
