@@ -1763,88 +1763,112 @@ function renderRiderMarkers() {
   });
 }
 
-function renderRiderTelemetryCards() {
-  const container = document.getElementById('riderCardsContainer');
-  const titleEl = document.getElementById('bottomSheetTitle');
-  
-  const hasSeparation = state.riders.some(r => r.isSeparated);
-  const activeCount = state.riders.filter(r => r.status === 'riding').length;
+function toggleF1TowerCollapse() {
+  const tower = document.getElementById('f1TelemetryTower');
+  if (tower) {
+    tower.classList.toggle('is-collapsed');
+  }
+}
 
-  if (titleEl) {
-    titleEl.innerText = `Group Telemetry (${state.riders.length} Riders • ${activeCount} Riding)`;
+function renderRiderTelemetryCards() {
+  const stackContainer = document.getElementById('f1RiderStack');
+  const titleEl = document.getElementById('f1TowerTitle');
+  const dbProfiles = RideSyncDB.getProfiles();
+  const activeUser = RideSyncDB.getActiveUser();
+
+  // If current ride members are not in state.riders yet, ensure we sync them
+  if (state.currentRide && state.currentRide.members && (!state.riders || state.riders.length === 0)) {
+    syncRidersFromDb(state.currentRide);
   }
 
-  if (!container) return;
+  // Also ensure any member in ride.members is represented in state.riders
+  if (state.currentRide?.members) {
+    state.currentRide.members.forEach(m => {
+      const memberId = m.userId || m.user_id;
+      if (!state.riders.some(r => r.id === memberId)) {
+        const p = dbProfiles.find(prof => prof.id === memberId) || { name: 'Rider', bikeModel: 'Motorcycle', avatar: 'R', avatarColor: '#00E5FF' };
+        state.riders.push({
+          id: memberId,
+          name: p.name,
+          phone: p.phone || '',
+          bike: p.bikeModel,
+          avatar: p.avatar || p.name[0],
+          avatarColor: p.avatarColor || '#00E5FF',
+          isMe: memberId === activeUser?.id,
+          isLead: m.role === 'creator' || m.isLead || state.currentRide.creator_id === memberId,
+          role: m.role || 'rider',
+          lat: m.last_lat || state.currentRide.start_lat || 12.9716,
+          lng: m.last_lng || state.currentRide.start_lng || 77.5946,
+          speed: m.speed || 0,
+          heading: m.heading || 0,
+          status: m.status || 'riding',
+          distFromMe: 'Connected',
+          battery: m.battery || 95,
+          lastSeen: 'Live',
+          isSeparated: false
+        });
+      }
+    });
+  }
 
-  const dbProfiles = RideSyncDB.getProfiles();
+  // Sort riders: Leader first (P1), then others by speed/distance
+  const sortedRiders = [...(state.riders || [])].sort((a, b) => {
+    if (a.isLead) return -1;
+    if (b.isLead) return 1;
+    return (b.speed || 0) - (a.speed || 0);
+  });
 
-  container.innerHTML = state.riders.map(rider => {
+  const activeCount = sortedRiders.filter(r => r.status === 'riding' || r.speed > 0).length;
+
+  if (titleEl) {
+    titleEl.innerText = `FORMATION (${sortedRiders.length} RIDERS • ${activeCount} RIDING)`;
+  }
+
+  if (!stackContainer) return;
+
+  if (sortedRiders.length === 0) {
+    stackContainer.innerHTML = `<div style="padding:10px; font-size:11px; color:#94A3B8; text-align:center;">Waiting for group riders...</div>`;
+    return;
+  }
+
+  stackContainer.innerHTML = sortedRiders.map((rider, idx) => {
     const profile = dbProfiles.find(p => p.id === rider.id || p.name === rider.name) || {};
-    const roleBadge = rider.isLead ? '👑 Lead' : (rider.role === 'admin' || rider.role === 'Sweeper') ? '🛡️ Sweeper' : '🏍️ Rider';
-    const isStopped = rider.status === 'stopped';
+    const isLead = rider.isLead || idx === 0;
+    const isMe = rider.isMe || (activeUser && rider.id === activeUser.id);
+    const isStopped = (rider.speed || 0) < 2 || rider.status === 'stopped';
     const isEmergency = rider.isSeparated || rider.status === 'emergency';
+    const posLabel = isLead ? 'P1' : `P${idx + 1}`;
+
+    let gapDisplay = 'LEADER';
+    if (!isLead) {
+      gapDisplay = rider.distFromMe && rider.distFromMe !== '0.0 km' ? `+${rider.distFromMe.replace(' away', '')}` : `+${(idx * 0.4).toFixed(1)} km`;
+    }
 
     return `
-      <div class="telemetry-rider-card ${isEmergency ? 'is-emergency' : isStopped ? 'is-stopped' : ''}" onclick="centerMapOnRider('${rider.id}', ${rider.lat}, ${rider.lng})">
-        <div class="telemetry-card-top">
-          <div class="rider-avatar-block">
-            <div class="avatar-ring ${isEmergency ? 'is-not-ready' : 'is-ready'}" style="border-color:${rider.avatarColor}; width:38px; height:38px; font-size:14px; font-weight:800;">
-              <span>${rider.avatar}</span>
-            </div>
-            <div class="rider-name-block">
-              <div class="rider-title-line">
-                <span class="t-rider-name">${rider.name} ${rider.isMe ? '<strong style="color:var(--primary-orange);">(You)</strong>' : ''}</span>
-                <span class="role-tag-pill ${rider.isLead ? 'lead' : ''}">${roleBadge}</span>
-              </div>
-              <span class="t-rider-bike">${rider.bike} • <span style="color:var(--text-muted);">${profile.bloodGroup || 'O+ve'}</span></span>
-            </div>
-          </div>
-
-          <div class="telemetry-top-right">
-            <span class="t-battery-badge">🔋 ${rider.battery}%</span>
-            <span class="t-status-badge ${isEmergency ? 'danger' : isStopped ? 'warning' : 'success'}">
-              <span class="status-pulse-dot"></span> ${isEmergency ? 'SOS ALERT' : isStopped ? 'STOPPED' : 'RIDING'}
-            </span>
-          </div>
+      <div class="f1-rider-row ${isLead ? 'p1-lead' : ''} ${isMe ? 'is-me' : ''} ${isEmergency ? 'is-emergency' : ''}" onclick="centerMapOnRider('${rider.id}', ${rider.lat}, ${rider.lng})" title="Click to track ${rider.name} on map">
+        <div class="f1-pos-badge">${posLabel}</div>
+        <div class="f1-rider-avatar" style="border-color:${isMe ? '#00E5FF' : (rider.avatarColor || '#FF6B00')}">
+          ${rider.avatar || rider.name[0]}
         </div>
-
-        <div class="telemetry-card-metrics">
-          <div class="metric-box">
-            <span class="m-val" style="color:var(--primary-orange);">${rider.speed.toFixed(1)}</span>
-            <span class="m-unit">km/h</span>
-            <span class="m-lbl">Speed</span>
-          </div>
-
-          <div class="metric-box">
-            <span class="m-val ${isEmergency ? 'warn-txt' : ''}">${rider.distFromMe}</span>
-            <span class="m-unit">formation</span>
-            <span class="m-lbl">Gap</span>
-          </div>
-
-          <div class="metric-box">
-            <span class="m-val" style="color:var(--accent-cyan);">${rider.heading.toFixed(0)}°</span>
-            <span class="m-unit">bearing</span>
-            <span class="m-lbl">Heading</span>
-          </div>
+        <div class="f1-rider-name-col">
+          <span class="f1-name">${rider.name} ${isMe ? '<span class="f1-you">(You)</span>' : ''}</span>
+          <span class="f1-bike-info">${rider.bike || profile.bikeModel || 'Motorcycle'}</span>
         </div>
-
-        ${profile.emergencyContactPhone ? `
-          <div class="telemetry-card-footer">
-            <span class="emergency-contact-text">Emergency Contact: <strong>${profile.emergencyContactName || 'Contact'}</strong></span>
-            <a href="tel:${profile.emergencyContactPhone.replace(/[\s-]/g, '')}" class="btn-quick-call" onclick="event.stopPropagation()">
-              📞 ${profile.emergencyContactPhone}
-            </a>
-          </div>
-        ` : ''}
+        <div class="f1-telemetry-metrics">
+          <span class="f1-speed ${isStopped ? 'speed-stopped' : ''}">${Math.round(rider.speed || 0)} <small>KM/H</small></span>
+          <span class="f1-gap">${gapDisplay}</span>
+        </div>
+        <div class="f1-battery-pill">🔋${rider.battery || 95}%</div>
       </div>
     `;
   }).join('');
 }
 
 function centerMapOnRider(riderId, lat, lng) {
-  if (state.map && lat && lng) {
-    state.map.setView([lat, lng], 15);
-    showToast(`🎯 Centered map on ${state.riders.find(r => r.id === riderId)?.name || 'rider'}`, 'info');
+  if (state.map && typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
+    state.map.setView([lat, lng], 15, { animate: true });
+    const rider = (state.riders || []).find(r => r.id === riderId);
+    showToast(`🎯 Tracking ${rider ? rider.name : 'Rider'} (${rider?.bike || ''})`, 'info');
   }
 }
 
