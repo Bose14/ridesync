@@ -895,6 +895,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // End Live Ride Session (Updates status to completed)
+  if (pathname === '/api/rides/end' && req.method === 'POST') {
+    getJsonBody((err, body) => {
+      const { rideId, leadId } = body;
+      const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(rideId);
+      if (!ride) return sendJson(404, { error: 'Ride not found' });
+      if (ride.creator_id !== leadId) return sendJson(403, { error: 'Only the Ride Lead can end the ride' });
+
+      db.prepare('UPDATE rides SET status = ? WHERE id = ?').run('completed', rideId);
+
+      // System announcement
+      db.prepare(`
+        INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
+        VALUES (?, ?, ?, 'System', 'system', '🏁 RIDE COMPLETED! Great riding with everyone.', ?)
+      `).run('msg-' + Date.now(), rideId, leadId, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+      // Broadcast ride ended to all WebSocket connected riders
+      broadcastToRide(rideId, {
+        type: 'ride_ended',
+        rideId,
+        status: 'completed'
+      });
+
+      sendJson(200, { success: true, status: 'completed', message: 'Ride ended successfully' });
+    });
+    return;
+  }
+
   // Update Ride Details
   if (pathname.startsWith('/api/rides/') && !pathname.endsWith('/waypoints') && !pathname.endsWith('/pins') && !pathname.endsWith('/messages') && req.method === 'PUT') {
     const rideId = pathname.replace('/api/rides/', '');

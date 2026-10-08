@@ -531,6 +531,27 @@ const RideSyncDB = (function () {
       }
     },
 
+    // End Live Ride Session
+    async endLiveRide(rideId, leadUserId) {
+      const db = loadDb();
+      const ride = db.rides.find(r => r.id === rideId);
+      if (ride) {
+        ride.status = 'completed';
+        saveDb(db);
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/rides/end`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rideId, leadId: leadUserId })
+        });
+        return await res.json();
+      } catch (e) {
+        return { success: true, status: 'completed' };
+      }
+    },
+
     // Waypoints
     saveWaypoints(rideId, waypoints) {
       const db = loadDb();
