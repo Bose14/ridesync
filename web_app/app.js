@@ -1092,9 +1092,16 @@ function startLiveRideSession() {
   if (state.currentRide) state.currentRide.status = 'active';
   state.isNavFollowMode = true;
   navigateTo('screenLiveMap');
-  showToast('🚀 Ride Started! Google Maps Cockpit Navigation Active', 'success');
+  showToast('🚀 Ride Started! Journey Mode Active', 'success');
   setTimeout(() => {
-    recenterOnGroup(false);
+    // Initialize journey mode with enhanced features
+    RideSyncEnhancements.initializeJourneyMode();
+    RideSyncEnhancements.smartRecenter(null, {
+      duration: 800,
+      enableFollow: true,
+      showFeedback: false
+    });
+    RideSyncEnhancements.startIntelligentLocationFollow();
   }, 400);
 }
 
@@ -1447,11 +1454,17 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
     }
   });
 
+  // Use enhanced smooth marker animation
+  if (myRider && state.riderMarkers[myRider.id]) {
+    const oldPos = state.riderMarkers[myRider.id].getLatLng();
+    RideSyncEnhancements.updateRiderLocationWithoutFlicker(myRider.id, oldPos.lat, oldPos.lng, lat, lng, speed, heading);
+  }
+
   renderRiderMarkers();
   renderRiderTelemetryCards();
 
-  // If Ride Navigation follow mode is active, smoothly track rider like Google Maps
-  if (state.isNavFollowMode && state.map) {
+  // If Ride Navigation follow mode is active, smoothly track rider with intelligent follow
+  if (state.isNavFollowMode && state.map && RideSyncEnhancements.isFollowingEnabled()) {
     state.map.panTo([lat, lng], { animate: true, duration: 0.45, easeLinearity: 0.25 });
   }
 
@@ -2054,20 +2067,8 @@ let lastRecenterClickTime = 0;
 
 // Update UI state of Recenter button in bottom HUD
 function updateRecenterButtonUI() {
-  const btn = document.getElementById('btnRecenterHud');
-  if (!btn) return;
-
-  if (state.isNavFollowMode) {
-    btn.classList.add('active-follow');
-    btn.classList.remove('needs-recenter');
-    btn.innerHTML = '🎯 Ride View';
-    btn.title = 'Active Navigation Follow Mode (Zoom 18.5)';
-  } else {
-    btn.classList.remove('active-follow');
-    btn.classList.add('needs-recenter');
-    btn.innerHTML = '🎯 Recenter Navigation';
-    btn.title = 'Tap to snap back to close-up Google Maps ride view';
-  }
+  // Use enhanced version
+  RideSyncEnhancements.updateRecenterButtonSmartly();
 }
 
 // Toggle 3D Cockpit Ride Perspective (Google Maps style forward road perspective)
@@ -2092,7 +2093,9 @@ function toggleCockpit3dPerspective() {
   }, 250);
 }
 
-// Recenter Map directly on User's Location in Street-Level Ride Navigation View (Google Maps Journey Mode)
+// Enhanced Recenter with intelligent zoom and follow mode
+let lastRecenterClickTime = 0;
+
 function recenterOnGroup(showFeedback = true) {
   if (!state.map) return;
   try { state.map.invalidateSize(); } catch(e) {}
@@ -2101,68 +2104,41 @@ function recenterOnGroup(showFeedback = true) {
   const isDoubleTap = (now - lastRecenterClickTime) < 500;
   lastRecenterClickTime = now;
 
-  // If rapid double tap on recenter, toggle 3D cockpit perspective instead of kicking user out of ride view
+  // Double-tap to toggle 3D perspective
   if (isDoubleTap) {
-    toggleCockpit3dPerspective();
+    toggleCockpit3dPerspective?.();
     return;
   }
 
-  const activeUser = PayanamDB.getActiveUser();
-  const myRider = (state.riders || []).find(r => r.isMe || (activeUser && r.id === activeUser.id)) || (state.riders || [])[0];
-  const ride = state.currentRide || PayanamDB.getRides()[0];
-
-  // 1. Get exact rider location
-  let targetLat = state.userGps?.lat;
-  let targetLng = state.userGps?.lng;
-
-  if (typeof targetLat !== 'number' || typeof targetLng !== 'number' || isNaN(targetLat) || isNaN(targetLng)) {
-    if (myRider && typeof myRider.lat === 'number' && typeof myRider.lng === 'number' && !isNaN(myRider.lat) && !isNaN(myRider.lng)) {
-      targetLat = myRider.lat;
-      targetLng = myRider.lng;
-    }
-  }
-
-  // Fallback to ride start waypoint
-  if (typeof targetLat !== 'number' || typeof targetLng !== 'number' || isNaN(targetLat) || isNaN(targetLng)) {
-    targetLat = ride?.waypoints?.[0]?.lat || ride?.start_lat || ride?.startLat || 12.9716;
-    targetLng = ride?.waypoints?.[0]?.lng || ride?.start_lng || ride?.startLng || 77.5946;
-  }
-
-  // Lock Navigation Follow Mode
-  state.isNavFollowMode = true;
-  updateRecenterButtonUI();
-
-  // Close-up Google Maps journey street zoom (Zoom 18.5)
-  const navStreetZoom = 18.5;
-
-  state.map.flyTo([targetLat, targetLng], navStreetZoom, {
-    duration: 0.9,
-    easeLinearity: 0.25
+  // Use enhanced smart recenter
+  RideSyncEnhancements.smartRecenter(null, {
+    duration: 1000,
+    zoom: null, // Auto-determine based on rider count
+    enableFollow: true,
+    showFeedback: showFeedback,
+    smooth: true
   });
 
-  const userName = myRider?.name || activeUser?.name || 'You';
-  const bikeModel = myRider?.bike || activeUser?.bikeModel || 'Motorcycle';
-  if (showFeedback) {
-    showToast(`🎯 Ride View: Street Level Tracking (${userName})`, 'success');
-  }
-
-  // Refresh browser geolocation if active
-  if (navigator.geolocation && PayanamMaps.isGpsActive()) {
-    navigator.geolocation.getCurrentPosition((pos) => {
+  // Throttled refresh of GPS position
+  RideSyncEnhancements.throttledGetCurrentPosition(
+    (pos) => {
       const liveLat = pos.coords.latitude;
       const liveLng = pos.coords.longitude;
       state.userGps = { lat: liveLat, lng: liveLng, accuracy: pos.coords.accuracy };
+
+      const activeUser = PayanamDB.getActiveUser();
+      const myRider = (state.riders || []).find(r => r.isMe || (activeUser && r.id === activeUser.id));
       if (myRider) {
         myRider.lat = liveLat;
         myRider.lng = liveLng;
       }
+
       renderRiderMarkers();
       renderRiderTelemetryCards();
-      if (state.isNavFollowMode && state.map) {
-        state.map.panTo([liveLat, liveLng], { animate: true, duration: 0.6 });
-      }
-    }, () => {}, { enableHighAccuracy: true, timeout: 3500 });
-  }
+    },
+    () => {},
+    { enableHighAccuracy: true, timeout: 3500 }
+  );
 }
 
 function openLiveRide() {
