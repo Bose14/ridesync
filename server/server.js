@@ -735,7 +735,7 @@ const server = http.createServer((req, res) => {
   }
 
   // Get Single Ride by ID or Code (with Waypoints & Members)
-  if (pathname.startsWith('/api/rides/') && !pathname.endsWith('/waypoints') && !pathname.endsWith('/pins') && !pathname.endsWith('/messages') && !pathname.endsWith('/join') && !pathname.endsWith('/approve-member') && !pathname.endsWith('/start') && !pathname.endsWith('/end') && !pathname.endsWith('/telemetry') && req.method === 'GET') {
+  if (pathname.startsWith('/api/rides/') && !pathname.endsWith('/waypoints') && !pathname.endsWith('/pins') && !pathname.endsWith('/messages') && !pathname.endsWith('/join') && !pathname.endsWith('/approve-member') && !pathname.endsWith('/start') && !pathname.endsWith('/end') && !pathname.endsWith('/telemetry') && !pathname.endsWith('/live-members') && req.method === 'GET') {
     const targetId = pathname.replace('/api/rides/', '');
     const enriched = getEnrichedRide(targetId);
     if (enriched) return sendJson(200, enriched);
