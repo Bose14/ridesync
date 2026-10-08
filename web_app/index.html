@@ -445,58 +445,44 @@
           <!-- Full Screen Map Viewport -->
           <div id="liveRideMap" class="map-viewport"></div>
 
-          <!-- Map Overlay Floating Controls -->
-          <div class="map-overlay-controls">
-            <button class="map-btn-floating" onclick="recenterOnGroup()" title="Recenter on My Location">
-              🎯 Recenter
-            </button>
-            <button class="map-btn-floating" onclick="fitAllRidersInView()" title="Fit all riders across cities in view">
-              👥 All Riders
-            </button>
-            <button class="map-btn-floating" onclick="cycleMapLayer()" title="Switch Map Layer">
-              🗺️ Layer
-            </button>
-            <button class="map-btn-floating" onclick="openAddPinDialog()" title="Drop Custom Pin">
-              📍 Drop Pin
-            </button>
+          <!-- F1 Timing Tower & Group Formation Telemetry (Floating Top HUD) -->
+          <div class="f1-telemetry-tower" id="f1TelemetryTower">
+            <div class="f1-tower-header" onclick="toggleF1TowerCollapse()">
+              <div class="f1-header-left">
+                <span class="f1-pulse-dot"></span>
+                <span class="f1-tower-title" id="f1TowerTitle">FORMATION TELEMETRY</span>
+              </div>
+              <button class="f1-collapse-btn" id="f1CollapseBtn" title="Toggle Formation View">▼</button>
+            </div>
+            <div class="f1-rider-stack" id="f1RiderStack">
+              <!-- Dynamically populated via JS -->
+            </div>
           </div>
 
-          <!-- Glove-Friendly Quick Action Bar -->
-          <div class="glove-action-bar">
-            <button class="glove-btn tea" onclick="triggerQuickAction('tea', '☕ Tea Stop')">
-              <span class="glove-icon">☕</span>
-              <span class="glove-lbl">TEA</span>
-            </button>
-            <button class="glove-btn fuel" onclick="triggerQuickAction('fuel', '⛽ Fuel Stop')">
-              <span class="glove-icon">⛽</span>
-              <span class="glove-lbl">FUEL</span>
-            </button>
-            <button class="glove-btn food" onclick="triggerQuickAction('food', '🍴 Food Stop')">
-              <span class="glove-icon">🍴</span>
-              <span class="glove-lbl">FOOD</span>
-            </button>
-            <button class="glove-btn photo" onclick="triggerQuickAction('photo', '📸 Photo Stop')">
-              <span class="glove-icon">📸</span>
-              <span class="glove-lbl">PHOTO</span>
-            </button>
-            <button class="glove-btn sos" onclick="triggerSosEmergency()">
-              <span class="glove-icon">🚨</span>
-              <span class="glove-lbl">SOS</span>
-            </button>
-          </div>
-
-          <!-- Live Riders Bottom Sheet -->
-          <div class="riders-bottom-sheet" id="ridersBottomSheet">
-            <div class="sheet-drag-handle" onclick="toggleSheetExpand()"></div>
-            
-            <div class="sheet-header">
-              <span class="sheet-title" id="bottomSheetTitle">Group Telemetry (4 Riders)</span>
-              <span class="connection-status-dot connected">Realtime DB Connected</span>
+          <!-- Ultra-Clean Floating Bottom Riding Action Bar -->
+          <div class="live-floating-bottom-bar">
+            <div class="bottom-hud-actions">
+              <button class="btn-float-hud" onclick="fitAllRidersInView()" title="Fit all group riders in view">
+                👥 All Riders
+              </button>
+              <button class="btn-float-hud" onclick="recenterOnGroup()" title="Recenter on My Location">
+                🎯 Recenter
+              </button>
+              <button class="btn-float-hud" onclick="cycleMapLayer()" title="Switch Map Layer">
+                🗺️ Layer
+              </button>
+              <button class="btn-float-hud" onclick="openAddPinDialog()" title="Drop Custom Pin">
+                📍 Drop Pin
+              </button>
+              <button class="btn-float-hud btn-hud-sos" onclick="triggerSosEmergency()" title="Emergency SOS Distress">
+                🚨 SOS
+              </button>
             </div>
 
-            <div class="rider-telemetry-cards" id="riderCardsContainer">
-              <!-- Rendered via JS -->
-            </div>
+            <!-- Single Floating Chat Icon at Bottom Right -->
+            <button class="btn-float-chat" onclick="toggleChatSheet()" title="Group Messages">
+              💬 <span class="badge-unread" id="unreadBadge">0</span>
+            </button>
           </div>
         </section>
 
