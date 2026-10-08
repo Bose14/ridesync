@@ -92,7 +92,7 @@ function decodeWsFrame(buffer) {
 
 
 const PORT = process.env.PORT || 5000;
-const DB_FILE = path.join(__dirname, 'payanam.db');
+const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'ridesync.db');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // 1. Load or Create Configuration
@@ -266,7 +266,7 @@ const server = http.createServer((req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RideSync Local Database Studio (payanam.db)</title>
+  <title>RideSync Local Database Studio (ridesync.db)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
@@ -325,7 +325,7 @@ const server = http.createServer((req, res) => {
         <p class="subtitle">SQLite Relational Engine &bull; Native Node 24</p>
       </div>
     </div>
-    <div class="db-path-badge">📁 server/payanam.db</div>
+    <div class="db-path-badge">📁 server/ridesync.db</div>
   </div>
 
   <div class="layout">
