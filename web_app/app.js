@@ -938,15 +938,36 @@ function renderRideLobby() {
     }
   } else {
     // Approved Member
-    if (btnStart) {
-      btnStart.style.display = 'block';
-      btnStart.disabled = true;
-      btnStart.innerText = '⏳ WAITING FOR LEAD TO START RIDE';
-      btnStart.style.background = '#1E293B';
-    }
-    if (waitingHint) {
-      waitingHint.style.display = 'block';
-      waitingHint.innerText = '🏍️ All set! Keep your gear on. The cockpit will automatically launch when Lead starts the ride.';
+    if (ride.status === 'active') {
+      if (btnStart) {
+        btnStart.style.display = 'block';
+        btnStart.disabled = false;
+        btnStart.innerText = '🚀 RIDE IN PROGRESS — ENTER COCKPIT';
+        btnStart.style.background = 'var(--primary-orange)';
+        btnStart.onclick = () => startLiveRideSession();
+      }
+      if (waitingHint) {
+        waitingHint.style.display = 'block';
+        waitingHint.innerText = '🏁 The Ride Lead has already started this ride! Launching live cockpit...';
+      }
+      // Auto-transition approved rider straight to live map
+      setTimeout(() => {
+        if (state.activeScreen === 'screenRideLobby' && (state.currentRide?.status === 'active' || ride.status === 'active')) {
+          startLiveRideSession();
+        }
+      }, 400);
+    } else {
+      if (btnStart) {
+        btnStart.style.display = 'block';
+        btnStart.disabled = true;
+        btnStart.innerText = '⏳ WAITING FOR LEAD TO START RIDE';
+        btnStart.style.background = '#1E293B';
+        btnStart.onclick = null;
+      }
+      if (waitingHint) {
+        waitingHint.style.display = 'block';
+        waitingHint.innerText = '🏍️ All set! Keep your gear on. The cockpit will automatically launch when Lead starts the ride.';
+      }
     }
   }
 }
@@ -955,7 +976,7 @@ function renderRideLobby() {
 async function handleLeadApprove(userId) {
   const activeUser = RideSyncDB.getActiveUser();
   await RideSyncDB.approveMember(state.currentRideId, userId, activeUser.id, 'approve');
-  showToast('✅ Rider approved and added to lobby!', 'success');
+  showToast('✅ Rider approved and added to ride!', 'success');
   refreshLobbyData();
 }
 
@@ -979,6 +1000,8 @@ async function handleStartLiveRide() {
 }
 
 function startLiveRideSession() {
+  closeModal('modalJoinRequestStatus');
+  closeModal('modalJoinApprovalPrompt');
   navigateTo('screenLiveMap');
   showToast('🚀 Live Ride Active! GPS Telemetry & Cockpit Engaged', 'success');
 }
@@ -993,6 +1016,16 @@ async function refreshLobbyData() {
       const current = rides.find(r => r.id === state.currentRideId);
       if (current) {
         state.currentRide = current;
+        const activeUser = RideSyncDB.getActiveUser();
+        const myMember = (current.members || []).find(m => (m.userId || m.user_id) === activeUser?.id);
+        const isApproved = myMember && (myMember.status === 'ready' || myMember.status === 'active' || myMember.role === 'creator' || myMember.isLead);
+
+        // If ride is already in progress and this rider is approved, enter cockpit immediately
+        if (current.status === 'active' && isApproved && state.activeScreen === 'screenRideLobby') {
+          startLiveRideSession();
+          return;
+        }
+
         if (state.activeScreen === 'screenRideLobby') {
           renderRideLobby();
         }
@@ -1104,6 +1137,13 @@ function handleRealtimeMessage(msg) {
     if (msg.userId === activeUser.id) {
       closeModal('modalJoinRequestStatus');
       showToast('🎉 Your join request was approved by the Lead!', 'success');
+      
+      // If the ride is already in progress, immediately enter live cockpit!
+      if (msg.rideStatus === 'active' || state.currentRide?.status === 'active') {
+        showToast('🚀 Ride is already in progress! Entering cockpit...', 'success');
+        startLiveRideSession();
+        return;
+      }
     }
     refreshLobbyData();
   } else if (msg.type === 'member_declined') {
@@ -1221,6 +1261,9 @@ async function submitJoinRide() {
       const leadNameEl = document.getElementById('pendingLeadName');
       if (leadNameEl) leadNameEl.innerText = leadProfile ? leadProfile.name : 'Ride Lead';
       openModal('modalJoinRequestStatus');
+    } else if (res.ride?.status === 'active') {
+      showToast('🚀 Ride is active! Entering live cockpit...', 'success');
+      startLiveRideSession();
     } else {
       showToast(`🏍️ ${res.message || 'Joined ride lobby!'}`, 'success');
     }
