@@ -433,7 +433,7 @@ const GoogleMapsStyleUI = (function () {
           background: #F0FFF0;
         }
 
-        /* Responsive */
+        /* Tablet & Mobile: 768px and below */
         @media (max-width: 768px) {
           .gm-instruction-banner {
             padding: 12px;
@@ -443,27 +443,217 @@ const GoogleMapsStyleUI = (function () {
             font-size: 18px;
           }
 
+          .gm-instruction-secondary {
+            font-size: 12px;
+          }
+
+          .gm-distance-display {
+            padding: 4px 8px;
+            min-width: 50px;
+          }
+
+          .gm-distance-value {
+            font-size: 16px;
+          }
+
           .gm-eta-time {
             font-size: 18px;
           }
 
-          .gm-nav-card {
+          /* Quick controls: move to bottom, horizontal layout */
+          .gm-quick-controls {
+            position: fixed;
             bottom: 16px;
+            right: auto;
+            left: 16px;
+            top: auto;
+            flex-direction: row;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            width: auto;
+            max-width: none;
+          }
+
+          .gm-quick-btn {
+            width: 52px;
+            height: 52px;
+            border-radius: 26px;
+            font-size: 18px;
+            flex: 1;
+            max-width: 90px;
+          }
+
+          .gm-icon {
+            font-size: 22px;
+          }
+
+          .gm-label {
+            display: inline;
+            font-size: 8px;
+            margin-top: 2px;
+          }
+
+          /* Move nav card up to avoid overlap with quick controls */
+          .gm-nav-card {
+            bottom: 80px;
             left: 8px;
             right: 8px;
             padding: 12px;
           }
 
-          .gm-quick-controls {
-            right: 8px;
+          .gm-nav-card-right {
             gap: 6px;
+            margin-left: 8px;
+          }
+
+          .gm-btn-icon {
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+          }
+
+          .gm-group-panel {
+            left: 16px;
+            bottom: 85px;
+            max-width: 150px;
+          }
+        }
+
+        /* Mobile: 480px and below */
+        @media (max-width: 480px) {
+          .gm-nav-container {
+            font-size: 14px;
+          }
+
+          .gm-instruction-banner {
+            padding: 10px;
+            border-radius: 0 0 8px 8px;
+          }
+
+          .gm-instruction-content {
+            gap: 8px;
+            margin-bottom: 6px;
+          }
+
+          .gm-turn-icon-container {
+            min-width: 40px;
+            height: 40px;
+          }
+
+          .gm-turn-icon {
+            width: 28px;
+            height: 28px;
+          }
+
+          .gm-instruction-main {
+            font-size: 16px;
+            font-weight: 600;
+          }
+
+          .gm-instruction-secondary {
+            font-size: 11px;
+          }
+
+          .gm-next-instruction-strip {
+            top: 120px;
+            padding: 10px;
+            font-size: 12px;
+          }
+
+          .gm-next-turn-icon {
+            font-size: 14px;
+            min-width: 12px;
+          }
+
+          .gm-next-distance {
+            font-size: 11px;
+            min-width: 35px;
+          }
+
+          .gm-distance-value {
+            font-size: 14px;
+          }
+
+          .gm-distance-unit {
+            font-size: 10px;
+          }
+
+          .gm-eta-time {
+            font-size: 16px;
+            margin-bottom: 2px;
+          }
+
+          .gm-nav-info {
+            gap: 6px;
+            font-size: 12px;
+          }
+
+          /* Bottom controls stack better on tiny screens */
+          .gm-quick-controls {
+            bottom: 12px;
+            left: 12px;
+            right: 12px;
+            gap: 8px;
+            padding: 10px;
           }
 
           .gm-quick-btn {
-            width: 48px;
-            height: 48px;
-            border-radius: 24px;
+            width: 46px;
+            height: 46px;
+            border-radius: 23px;
+            font-size: 16px;
+          }
+
+          .gm-icon {
             font-size: 18px;
+          }
+
+          .gm-label {
+            font-size: 7px;
+            margin-top: 1px;
+          }
+
+          .gm-nav-card {
+            bottom: 70px;
+            left: 6px;
+            right: 6px;
+            padding: 10px;
+          }
+
+          .gm-nav-card-left {
+            min-width: 120px;
+          }
+
+          .gm-nav-card-right {
+            gap: 4px;
+            margin-left: 6px;
+          }
+
+          .gm-btn-icon {
+            width: 36px;
+            height: 36px;
+            font-size: 14px;
+          }
+
+          .gm-group-panel {
+            left: 12px;
+            bottom: 75px;
+            padding: 8px;
+            max-width: 120px;
+          }
+
+          .gm-group-title {
+            font-size: 10px;
+            margin-bottom: 6px;
+          }
+
+          .gm-rider-badge {
+            font-size: 10px;
+            padding: 3px 6px;
           }
         }
 
