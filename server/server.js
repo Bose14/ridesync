@@ -92,7 +92,8 @@ function decodeWsFrame(buffer) {
 
 
 const PORT = process.env.PORT || 5000;
-const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'payanam.db');
+// Use persistent disk on Render (/var/data), fallback to local for development
+const DB_FILE = process.env.DB_FILE || process.env.RENDER ? '/var/data/payanam.db' : path.join(__dirname, 'payanam.db');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // 1. Load or Create Configuration
