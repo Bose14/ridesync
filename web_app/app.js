@@ -1181,12 +1181,14 @@ const PayanamRealtime = (function () {
       } else if (state.activeScreen === 'screenLiveMap') {
         const apiBase = RideSyncDB.getApiBaseUrl();
         try {
-          const res = await fetch(`${apiBase}/rides`);
+          // Use lightweight live-members endpoint instead of fetching entire rides list
+          const res = await fetch(`${apiBase}/rides/${state.currentRideId}/live-members`);
           if (res.ok) {
-            const rides = await res.json();
-            const current = rides.find(r => r.id === state.currentRideId);
-            if (current && current.members) {
-              syncRidersFromDb(current);
+            const members = await res.json();
+            // Update ride_members with live location data
+            if (state.currentRide) {
+              state.currentRide.members = members;
+              syncRidersFromDb(state.currentRide);
               renderRiderMarkers();
               renderRiderTelemetryCards();
             }

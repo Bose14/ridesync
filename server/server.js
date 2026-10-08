@@ -1090,6 +1090,41 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Get Live Members Data (Lightweight - Only Location Info)
+  // Optimized for frequent polling during live rides
+  if (pathname.startsWith('/api/rides/') && pathname.endsWith('/live-members') && req.method === 'GET') {
+    const rideId = pathname.replace('/api/rides/', '').replace('/live-members', '');
+    try {
+      const members = db.prepare(`
+        SELECT
+          user_id,
+          last_lat,
+          last_lng,
+          speed,
+          heading,
+          battery,
+          status,
+          last_seen
+        FROM ride_members
+        WHERE ride_id = ?
+      `).all(rideId);
+
+      // Enrich with profile names
+      const enriched = members.map(m => {
+        const profile = db.prepare('SELECT name FROM profiles WHERE id = ?').get(m.user_id);
+        return {
+          ...m,
+          name: profile ? profile.name : 'Unknown Rider'
+        };
+      });
+
+      return sendJson(200, enriched);
+    } catch (e) {
+      console.warn('[Live Members Error]:', e);
+      return sendJson(500, { error: 'Database error' });
+    }
+  }
+
   // Update Config (Switch DB driver, Supabase creds)
   if (pathname === '/api/config' && req.method === 'POST') {
     getJsonBody((err, body) => {
