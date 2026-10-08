@@ -92,7 +92,7 @@ function decodeWsFrame(buffer) {
 
 
 const PORT = process.env.PORT || 5000;
-const DB_FILE = path.join(__dirname, 'payanam.db');
+const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'ridesync.db');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // 1. Load or Create Configuration
@@ -266,7 +266,7 @@ const server = http.createServer((req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RideSync Local Database Studio (payanam.db)</title>
+  <title>RideSync Local Database Studio (ridesync.db)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
@@ -325,7 +325,7 @@ const server = http.createServer((req, res) => {
         <p class="subtitle">SQLite Relational Engine &bull; Native Node 24</p>
       </div>
     </div>
-    <div class="db-path-badge">📁 server/payanam.db</div>
+    <div class="db-path-badge">📁 server/ridesync.db</div>
   </div>
 
   <div class="layout">
@@ -731,60 +731,151 @@ const server = http.createServer((req, res) => {
       `).run(
         id,
         code,
-        body.name || 'New Ride',
+        body.name || 'New Group Ride',
         body.description || '',
         body.creatorId || 'usr-bose',
-        body.date || '2026-10-10',
-        body.time || '05:00',
-        'active',
-        body.startAddress || 'Start',
+        body.date || new Date().toISOString().split('T')[0],
+        body.time || '06:00',
+        'lobby',
+        body.startAddress || 'Start Location',
         body.startLat || 12.9176,
         body.startLng || 77.6233,
         body.destAddress || 'Destination',
         body.destLat || 10.2185,
         body.destLng || 77.4682,
-        body.distanceKm || 320,
-        body.durationHours || 8.0
+        body.distanceKm || 0,
+        body.durationHours || 0
       );
 
-      // Add creator as member
+      // Add creator as lead member
       db.prepare('INSERT INTO ride_members (ride_id, user_id, role, status) VALUES (?, ?, ?, ?)').run(id, body.creatorId || 'usr-bose', 'creator', 'ready');
 
-      // Add default waypoints if any
+      // Add waypoints
       if (body.waypoints && Array.isArray(body.waypoints)) {
         const insertWp = db.prepare('INSERT INTO waypoints (ride_id, name, type, icon, lat, lng, sequence, planned_duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
         body.waypoints.forEach((wp, idx) => {
-          insertWp.run(id, wp.name, wp.type || 'custom', wp.icon || '📍', wp.lat, wp.lng, idx + 1, wp.plannedDuration || 0);
+          insertWp.run(id, wp.name || `Stop ${idx + 1}`, wp.type || 'custom', wp.icon || '📍', wp.lat, wp.lng, idx + 1, wp.plannedDuration || 0);
         });
       }
+
+      // Add initial system message
+      const creator = findProfileByPhone(body.creatorId) || db.prepare('SELECT * FROM profiles WHERE id = ?').get(body.creatorId);
+      db.prepare(`
+        INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
+        VALUES (?, ?, ?, ?, 'system', ?, ?)
+      `).run('msg-' + Date.now(), id, body.creatorId, creator ? creator.name : 'Lead', `🏍️ Ride lobby created by ${creator ? creator.name : 'Lead'}`, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
       sendJson(200, { success: true, rideId: id, code });
     });
     return;
   }
 
-  // Join Ride with Code
+  // Request to Join Ride (Sends pending join request to Lead)
   if (pathname === '/api/rides/join' && req.method === 'POST') {
     getJsonBody((err, body) => {
       const code = (body.code || '').trim().toUpperCase();
       const userId = body.userId;
+      if (!userId) return sendJson(400, { error: 'User ID is required' });
 
       const ride = db.prepare('SELECT * FROM rides WHERE UPPER(code) = ?').get(code);
       if (!ride) return sendJson(404, { error: 'Ride code not found in database' });
 
+      const user = db.prepare('SELECT * FROM profiles WHERE id = ?').get(userId);
+      const isCreator = ride.creator_id === userId;
+      const initialStatus = isCreator ? 'ready' : 'pending';
+
+      // Insert or update member status
       db.prepare(`
         INSERT INTO ride_members (ride_id, user_id, role, status)
-        VALUES (?, ?, 'rider', 'ready')
-        ON CONFLICT(ride_id, user_id) DO NOTHING
-      `).run(ride.id, userId);
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ride_id, user_id) DO UPDATE SET status = excluded.status
+      `).run(ride.id, userId, isCreator ? 'creator' : 'rider', initialStatus);
+
+      // Broadcast join request to Lead via WebSocket
+      broadcastToRide(ride.id, {
+        type: isCreator ? 'member_joined' : 'join_request',
+        rideId: ride.id,
+        user: user ? formatProfileOutput(user) : { id: userId, name: 'Rider' },
+        status: initialStatus
+      });
+
+      sendJson(200, {
+        success: true,
+        ride,
+        status: initialStatus,
+        isCreator,
+        message: isCreator ? 'Joined as Lead' : 'Join request sent to Ride Lead for approval'
+      });
+    });
+    return;
+  }
+
+  // Lead Approves / Declines Join Request
+  if (pathname === '/api/rides/approve-member' && req.method === 'POST') {
+    getJsonBody((err, body) => {
+      const { rideId, userId, leadId, action } = body;
+      const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(rideId);
+      if (!ride) return sendJson(404, { error: 'Ride not found' });
+      if (ride.creator_id !== leadId) return sendJson(403, { error: 'Only the Ride Lead can approve riders' });
 
       const user = db.prepare('SELECT * FROM profiles WHERE id = ?').get(userId);
+
+      if (action === 'approve') {
+        db.prepare('UPDATE ride_members SET status = ? WHERE ride_id = ? AND user_id = ?').run('ready', rideId, userId);
+        
+        // Post welcome message
+        db.prepare(`
+          INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
+          VALUES (?, ?, ?, ?, 'system', ?, ?)
+        `).run('msg-' + Date.now(), rideId, userId, user ? user.name : 'Rider', `🎉 ${user ? user.name : 'A rider'} was approved to join the group!`, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+        broadcastToRide(rideId, {
+          type: 'member_approved',
+          rideId,
+          userId,
+          user: user ? formatProfileOutput(user) : null
+        });
+
+        return sendJson(200, { success: true, status: 'ready', message: 'Rider approved' });
+      } else {
+        db.prepare('DELETE FROM ride_members WHERE ride_id = ? AND user_id = ?').run(rideId, userId);
+        
+        broadcastToRide(rideId, {
+          type: 'member_declined',
+          rideId,
+          userId
+        });
+
+        return sendJson(200, { success: true, status: 'declined', message: 'Join request declined' });
+      }
+    });
+    return;
+  }
+
+  // Start Live Ride Session (Transitions all riders into Live Map Cockpit)
+  if (pathname === '/api/rides/start' && req.method === 'POST') {
+    getJsonBody((err, body) => {
+      const { rideId, leadId } = body;
+      const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(rideId);
+      if (!ride) return sendJson(404, { error: 'Ride not found' });
+      if (ride.creator_id !== leadId) return sendJson(403, { error: 'Only the Ride Lead can start the live ride' });
+
+      db.prepare('UPDATE rides SET status = ? WHERE id = ?').run('active', rideId);
+
+      // System announcement
       db.prepare(`
         INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
-        VALUES (?, ?, ?, ?, 'system', ?, ?)
-      `).run('msg-' + Date.now(), ride.id, userId, user ? user.name : 'Rider', `🏍️ ${user ? user.name : 'A rider'} joined the ride lobby`, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        VALUES (?, ?, ?, 'System', 'system', '🏁 LIVE RIDE STARTED! All riders switch to cockpit.', ?)
+      `).run('msg-' + Date.now(), rideId, leadId, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
-      sendJson(200, { success: true, ride });
+      // Broadcast live ride start to all WebSocket connected riders
+      broadcastToRide(rideId, {
+        type: 'ride_started',
+        rideId,
+        status: 'active'
+      });
+
+      sendJson(200, { success: true, status: 'active', message: 'Live ride started successfully' });
     });
     return;
   }

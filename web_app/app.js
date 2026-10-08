@@ -38,9 +38,45 @@ document.addEventListener('DOMContentLoaded', () => {
   renderHistoryScreen();
   renderSidePanelAccounts();
 
+  // Check if URL has ?join=CODE
+  checkUrlJoinParameter();
+
   // Always request Location & Notification permissions on launch
   requestPermissionsOnLaunch();
 });
+
+function checkUrlJoinParameter() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const joinCode = urlParams.get('join') || urlParams.get('code');
+  if (joinCode) {
+    console.log(`[Payanam] URL Join parameter detected: ${joinCode}`);
+    const activeUser = RideSyncDB.getActiveUser();
+    if (activeUser && activeUser.id) {
+      setTimeout(() => {
+        RideSyncDB.joinRide(joinCode, activeUser.id).then(res => {
+          if (res.success) {
+            state.currentRideId = res.ride.id;
+            state.currentRide = res.ride;
+            PayanamRealtime.connect(res.ride.id);
+            navigateTo('screenRideLobby');
+            if (res.status === 'pending') {
+              const leadProfile = RideSyncDB.getProfile(res.ride.creator_id || res.ride.creatorId);
+              const leadNameEl = document.getElementById('pendingLeadName');
+              if (leadNameEl) leadNameEl.innerText = leadProfile ? leadProfile.name : 'Ride Lead';
+              openModal('modalJoinRequestStatus');
+            } else {
+              showToast(`🏍️ ${res.message || 'Joined ride lobby!'}`, 'success');
+            }
+          } else {
+            showToast(`❌ ${res.error}`, 'error');
+          }
+        });
+      }, 600);
+    } else {
+      showToast(`🔑 Please log in to join ride with code: ${joinCode}`, 'info');
+    }
+  }
+}
 
 // -------------------------------------------------------------
 // PERMISSION & REALTIME LOCATION ENGINE
@@ -264,7 +300,7 @@ function navigateTo(screenId) {
       if (state.map) state.map.invalidateSize();
     }, 600);
   } else if (screenId === 'screenCreateRide') {
-    renderRoutePlannerWaypoints();
+    initPlannerMap();
   } else if (screenId === 'screenRideLobby') {
     renderRideLobby();
   }
@@ -384,162 +420,721 @@ function selectAndOpenSummary(rideId) {
 }
 
 // -------------------------------------------------------------
-// ROUTE & STOP PLANNER (With Real OSRM Road Geometry Calculation)
+// GOOGLE MAPS STYLE ROUTE & STOP PLANNER ENGINE
 // -------------------------------------------------------------
-function renderRoutePlannerWaypoints() {
-  const ride = state.currentRide;
-  const container = document.getElementById('waypointList');
-  if (!container || !ride) return;
+const plannerState = {
+  start: { name: 'Bangalore, Silk Board', lat: 12.9176, lng: 77.6233 },
+  destination: { name: 'Pillar Rocks, Kodaikanal', lat: 10.2185, lng: 77.4682 },
+  stops: [], // Array of { id, name, lat, lng }
+  distanceKm: 324.8,
+  durationHours: 8.5,
+  map: null,
+  routeLayer: null,
+  markers: []
+};
 
-  const waypoints = ride.waypoints || [];
-  container.innerHTML = waypoints.map((wp, idx) => `
-    <div class="waypoint-item" data-id="${wp.id}">
-      <span class="drag-handle">☰</span>
-      <span class="wp-icon">${wp.icon || '📍'}</span>
-      <div class="wp-details">
-        <span class="wp-name">${wp.name}</span>
-        <span class="wp-type-badge ${wp.type}">${wp.type.toUpperCase()}</span>
-      </div>
-      ${waypoints.length > 2 ? `<button class="btn-remove-stop" onclick="removeStop(${wp.id})">✕</button>` : ''}
-    </div>
-  `).join('');
+let searchDebounceTimers = {};
+let activePromptRequest = null;
 
-  calculateAndDisplayRouteStats(waypoints);
+function initPlannerMap() {
+  const mapEl = document.getElementById('plannerMap');
+  if (!mapEl) return;
+
+  if (!plannerState.map) {
+    plannerState.map = L.map('plannerMap', {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([plannerState.start.lat, plannerState.start.lng], 9);
+
+    PayanamMaps.attachTileLayer(plannerState.map, 'google-roadmap');
+  }
+
+  // Populate inputs with current planner values if empty
+  const startInput = document.getElementById('inputStartLocation');
+  if (startInput && !startInput.value) startInput.value = plannerState.start.name;
+
+  const destInput = document.getElementById('inputDestLocation');
+  if (destInput && !destInput.value) destInput.value = plannerState.destination.name;
+
+  renderPlannerStopsUi();
+
+  setTimeout(() => {
+    if (plannerState.map) {
+      plannerState.map.invalidateSize();
+      recalculatePlannerRoute();
+    }
+  }, 200);
 }
 
-async function calculateAndDisplayRouteStats(waypoints) {
-  const distanceEl = document.getElementById('routeTotalDistance');
-  const durationEl = document.getElementById('routeTotalTime');
+function renderPlannerStopsUi() {
+  const container = document.getElementById('gmapsStopsContainer');
+  if (!container) return;
 
-  if (!waypoints || waypoints.length < 2) return;
+  container.innerHTML = plannerState.stops.map((stop, idx) => `
+    <div class="gmaps-input-row" id="rowStop_${idx}">
+      <div class="gmaps-dot stop-dot">${idx + 1}</div>
+      <div class="gmaps-input-wrapper">
+        <input type="text" class="gmaps-input" value="${stop.name}" placeholder="Choose stop / chai halt..." autocomplete="off" oninput="handlePlaceSearch(this.value, 'stop', ${idx})" onfocus="showPlaceSuggestions('stop', ${idx})" />
+        <button class="btn-remove-stop" onclick="removeIntermediateStopRow(${idx})" title="Remove stop">✕</button>
+        <div class="gmaps-suggestions" id="stopSuggestions_${idx}" style="display:none;"></div>
+      </div>
+    </div>
+  `).join('');
+}
 
-  const coords = waypoints.map(w => [w.lat, w.lng]);
-  const roadData = await RideSyncMaps.fetchRoadRoute(coords);
+// Live Photon Place Search with Suggestions Dropdown
+function handlePlaceSearch(query, type, stopIndex = null) {
+  const timerKey = `${type}_${stopIndex !== null ? stopIndex : ''}`;
+  clearTimeout(searchDebounceTimers[timerKey]);
 
-  if (roadData) {
-    if (distanceEl) distanceEl.innerText = `${roadData.distanceKm} km`;
-    if (durationEl) {
+  const targetDropdownId = type === 'start' ? 'startSuggestions' : (type === 'dest' ? 'destSuggestions' : `stopSuggestions_${stopIndex}`);
+  const dropdown = document.getElementById(targetDropdownId);
+
+  if (!query || query.trim().length < 2) {
+    if (dropdown) dropdown.style.display = 'none';
+    return;
+  }
+
+  searchDebounceTimers[timerKey] = setTimeout(async () => {
+    const centerLat = plannerState.start.lat || 12.9176;
+    const centerLng = plannerState.start.lng || 77.6233;
+    const places = await PayanamMaps.searchPlaces(query, centerLat, centerLng);
+
+    if (!dropdown) return;
+
+    if (places.length === 0) {
+      dropdown.innerHTML = `<div style="padding:10px 12px; font-size:12px; color:var(--text-muted);">No locations found for "${query}"</div>`;
+      dropdown.style.display = 'block';
+      return;
+    }
+
+    dropdown.innerHTML = places.map(p => `
+      <div class="gmaps-suggestion-item" onclick="selectPlaceSuggestion('${type}', ${stopIndex}, '${escapeQuotes(p.name)}', ${p.lat}, ${p.lng})">
+        <span class="suggestion-icon">📍</span>
+        <div class="suggestion-info">
+          <span class="suggestion-name">${p.name}</span>
+          <span class="suggestion-sub">${p.subText}</span>
+        </div>
+      </div>
+    `).join('');
+    dropdown.style.display = 'block';
+  }, 250);
+}
+
+function showPlaceSuggestions(type, stopIndex = null) {
+  const targetDropdownId = type === 'start' ? 'startSuggestions' : (type === 'dest' ? 'destSuggestions' : `stopSuggestions_${stopIndex}`);
+  const dropdown = document.getElementById(targetDropdownId);
+  if (dropdown && dropdown.innerHTML.trim()) {
+    dropdown.style.display = 'block';
+  }
+}
+
+function selectPlaceSuggestion(type, stopIndex, name, lat, lng) {
+  if (type === 'start') {
+    plannerState.start = { name, lat, lng };
+    const input = document.getElementById('inputStartLocation');
+    if (input) input.value = name;
+    document.getElementById('startSuggestions').style.display = 'none';
+  } else if (type === 'dest') {
+    plannerState.destination = { name, lat, lng };
+    const input = document.getElementById('inputDestLocation');
+    if (input) input.value = name;
+    document.getElementById('destSuggestions').style.display = 'none';
+  } else if (type === 'stop' && stopIndex !== null && plannerState.stops[stopIndex]) {
+    plannerState.stops[stopIndex] = { id: plannerState.stops[stopIndex].id, name, lat, lng };
+    renderPlannerStopsUi();
+  }
+
+  // Recalculate full OSRM road corridor
+  recalculatePlannerRoute();
+}
+
+function useCurrentLocationForStart() {
+  if ('geolocation' in navigator) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        plannerState.start = { name: '📍 My Current GPS Location', lat, lng };
+        const input = document.getElementById('inputStartLocation');
+        if (input) input.value = '📍 My Current GPS Location';
+        showToast('📍 Start point pinpointed to current GPS location!', 'success');
+        recalculatePlannerRoute();
+      },
+      (err) => {
+        showToast('Could not fetch current GPS location: ' + err.message, 'error');
+      },
+      { enableHighAccuracy: true }
+    );
+  }
+}
+
+function addIntermediateStopRow() {
+  const newStop = {
+    id: Date.now(),
+    name: '',
+    lat: (plannerState.start.lat + plannerState.destination.lat) / 2 + (Math.random() * 0.1 - 0.05),
+    lng: (plannerState.start.lng + plannerState.destination.lng) / 2 + (Math.random() * 0.1 - 0.05)
+  };
+  plannerState.stops.push(newStop);
+  renderPlannerStopsUi();
+  showToast('➕ Stop added. Search location or chai halt.', 'info');
+}
+
+function removeIntermediateStopRow(index) {
+  plannerState.stops.splice(index, 1);
+  renderPlannerStopsUi();
+  recalculatePlannerRoute();
+  showToast('🗑️ Stop removed', 'info');
+}
+
+function swapStartAndDestination() {
+  const temp = { ...plannerState.start };
+  plannerState.start = { ...plannerState.destination };
+  plannerState.destination = temp;
+
+  const startInput = document.getElementById('inputStartLocation');
+  const destInput = document.getElementById('inputDestLocation');
+  if (startInput) startInput.value = plannerState.start.name;
+  if (destInput) destInput.value = plannerState.destination.name;
+
+  recalculatePlannerRoute();
+  showToast('🔄 Route reversed!', 'info');
+}
+
+function quickSelectDestination(name, lat, lng) {
+  plannerState.destination = { name, lat, lng };
+  const destInput = document.getElementById('inputDestLocation');
+  if (destInput) destInput.value = name;
+  recalculatePlannerRoute();
+  showToast(`🎯 Destination set to ${name}`, 'success');
+}
+
+// Recalculate road corridor via OSRM and render markers on planner map
+async function recalculatePlannerRoute() {
+  if (!plannerState.map) return;
+
+  const allPoints = [plannerState.start, ...plannerState.stops.filter(s => s.name && s.lat), plannerState.destination];
+  const coords = allPoints.map(p => [p.lat, p.lng]);
+
+  // Clear existing markers & route polyline
+  (plannerState.markers || []).forEach(m => {
+    try { plannerState.map.removeLayer(m); } catch(e) {}
+  });
+  plannerState.markers = [];
+
+  if (plannerState.routeLayer) {
+    try { plannerState.map.removeLayer(plannerState.routeLayer); } catch(e) {}
+    plannerState.routeLayer = null;
+  }
+
+  // Draw Start Marker
+  const startIcon = L.divIcon({
+    className: 'planner-pin start',
+    html: '<div style="background:#00E676; color:#000; font-weight:800; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:2px solid #FFF; box-shadow:0 0 10px rgba(0,230,118,0.8);">🟢</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+  const startMarker = L.marker([plannerState.start.lat, plannerState.start.lng], { icon: startIcon }).addTo(plannerState.map);
+  startMarker.bindTooltip(`<b>Start:</b> ${plannerState.start.name}`, { permanent: false, direction: 'top' });
+  plannerState.markers.push(startMarker);
+
+  // Draw Stop Markers
+  plannerState.stops.forEach((stop, idx) => {
+    if (stop.lat && stop.lng) {
+      const stopIcon = L.divIcon({
+        className: 'planner-pin stop',
+        html: `<div style="background:#00E5FF; color:#000; font-weight:800; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; border:2px solid #FFF; font-size:12px; box-shadow:0 0 10px rgba(0,229,255,0.6);">${idx + 1}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+      });
+      const m = L.marker([stop.lat, stop.lng], { icon: stopIcon }).addTo(plannerState.map);
+      m.bindTooltip(`<b>Stop ${idx + 1}:</b> ${stop.name || 'Waypoint'}`, { permanent: false, direction: 'top' });
+      plannerState.markers.push(m);
+    }
+  });
+
+  // Draw Destination Marker
+  const destIcon = L.divIcon({
+    className: 'planner-pin dest',
+    html: '<div style="background:#FF6B00; color:#FFF; font-weight:800; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:2px solid #FFF; box-shadow:0 0 10px rgba(255,107,0,0.8);">🏁</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+  const destMarker = L.marker([plannerState.destination.lat, plannerState.destination.lng], { icon: destIcon }).addTo(plannerState.map);
+  destMarker.bindTooltip(`<b>Destination:</b> ${plannerState.destination.name}`, { permanent: false, direction: 'top' });
+  plannerState.markers.push(destMarker);
+
+  // Fetch real highway route from OSRM
+  const roadData = await PayanamMaps.fetchRoadRoute(coords);
+  if (roadData && roadData.latLngs) {
+    plannerState.distanceKm = roadData.distanceKm;
+    plannerState.durationHours = (roadData.durationMins / 60).toFixed(1);
+
+    plannerState.routeLayer = L.polyline(roadData.latLngs, {
+      color: '#FF6B00',
+      weight: 5,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(plannerState.map);
+
+    try {
+      plannerState.map.fitBounds(plannerState.routeLayer.getBounds(), { padding: [30, 30] });
+    } catch(e) {}
+
+    // Update Distance & Duration UI Badges
+    const distBadge = document.getElementById('plannerDistanceBadge');
+    if (distBadge) distBadge.innerText = `📍 ${roadData.distanceKm} km`;
+
+    const durBadge = document.getElementById('plannerDurationBadge');
+    if (durBadge) {
       const hrs = Math.floor(roadData.durationMins / 60);
       const mins = roadData.durationMins % 60;
-      durationEl.innerText = `${hrs} hrs ${mins} mins`;
+      durBadge.innerText = `⏱️ ~${hrs > 0 ? hrs + 'h ' : ''}${mins}m`;
     }
   }
 }
 
-function removeStop(wpId) {
-  if (!state.currentRide) return;
-  state.currentRide.waypoints = state.currentRide.waypoints.filter(w => w.id !== wpId);
-  RideSyncDB.saveWaypoints(state.currentRide.id, state.currentRide.waypoints);
-  renderRoutePlannerWaypoints();
-  showToast('🗑️ Stop removed from route', 'info');
-}
+// Submit and Create Ride
+async function submitCreateOrSaveRide() {
+  const nameInput = document.getElementById('inputRideName');
+  const dateInput = document.getElementById('inputRideDate');
+  const timeInput = document.getElementById('inputRideTime');
 
-function promptAddCustomStop() {
-  const name = prompt('Enter stop / place name (e.g., Highway Petrol Pump or Chai Halt):');
-  if (name && name.trim()) {
-    const newWp = {
-      id: Date.now(),
-      name: name.trim(),
+  const name = (nameInput?.value || '').trim() || 'Motorcycle Group Ride';
+  const date = dateInput?.value || new Date().toISOString().split('T')[0];
+  const time = timeInput?.value || '06:00';
+
+  // Build waypoints array from start, intermediate stops, and destination
+  const waypoints = [
+    { id: 1, name: plannerState.start.name, type: 'start', icon: '🟢', lat: plannerState.start.lat, lng: plannerState.start.lng },
+    ...plannerState.stops.map((s, idx) => ({
+      id: s.id || Date.now() + idx,
+      name: s.name || `Stop ${idx + 1}`,
       type: 'custom',
       icon: '📍',
-      lat: 11.0000 + (Math.random() * 1.5),
-      lng: 77.8000 + (Math.random() * 0.5),
+      lat: s.lat,
+      lng: s.lng,
       plannedDuration: 15
-    };
-    state.currentRide.waypoints.splice(state.currentRide.waypoints.length - 1, 0, newWp);
-    RideSyncDB.saveWaypoints(state.currentRide.id, state.currentRide.waypoints);
-    renderRoutePlannerWaypoints();
-    showToast(`✅ Added "${name}" to route!`, 'success');
-  }
-}
+    })),
+    { id: 999, name: plannerState.destination.name, type: 'destination', icon: '🏁', lat: plannerState.destination.lat, lng: plannerState.destination.lng }
+  ];
 
-function saveAndProceedToLobby() {
-  const name = document.getElementById('inputRideName')?.value.trim() || 'Motorcycle Group Ride';
-  const date = document.getElementById('inputRideDate')?.value || '2026-10-10';
-  const time = document.getElementById('inputRideTime')?.value || '05:00';
-
-  RideSyncDB.updateRide(state.currentRide.id, {
+  const ridePayload = {
     name,
     date,
-    time
-  });
+    time,
+    startAddress: plannerState.start.name,
+    startLat: plannerState.start.lat,
+    startLng: plannerState.start.lng,
+    destAddress: plannerState.destination.name,
+    destLat: plannerState.destination.lat,
+    destLng: plannerState.destination.lng,
+    distanceKm: parseFloat(plannerState.distanceKm) || 0,
+    durationHours: parseFloat(plannerState.durationHours) || 0,
+    waypoints
+  };
 
-  loadCurrentRideFromDb(state.currentRide.id);
-  showToast('💾 Ride plan saved!', 'success');
+  const newRide = await RideSyncDB.createRide(ridePayload);
+  state.currentRideId = newRide.id;
+  state.currentRide = newRide;
+
+  // Connect to realtime WebSocket room
+  PayanamRealtime.connect(newRide.id);
+
+  showToast(`🎉 Ride Lobby Created! Code: ${newRide.code}`, 'success');
   navigateTo('screenRideLobby');
 }
 
 // -------------------------------------------------------------
-// RIDE LOBBY SCREEN (Dynamic from DB)
+// RIDE LOBBY ROOM ENGINE (Dynamic Members, Join Requests & Roles)
 // -------------------------------------------------------------
 function renderRideLobby() {
-  const ride = state.currentRide;
+  const ride = state.currentRide || RideSyncDB.getRide(state.currentRideId) || RideSyncDB.getRides()[0];
   if (!ride) return;
 
+  state.currentRide = ride;
+  state.currentRideId = ride.id;
+
+  const activeUser = RideSyncDB.getActiveUser() || { id: 'usr-bose', name: 'Rider' };
+  const isLead = ride.creator_id === activeUser.id || ride.creatorId === activeUser.id;
+
+  // Connect to realtime room
+  PayanamRealtime.connect(ride.id);
+
+  // 1. Banner Info
   const titleEl = document.getElementById('lobbyRideTitle');
   if (titleEl) titleEl.innerText = ride.name;
 
   const codeEl = document.getElementById('lobbyRideCode');
   if (codeEl) codeEl.innerText = ride.code;
 
-  const inviteEl = document.getElementById('lobbyInviteLink');
-  if (inviteEl) inviteEl.innerText = `ridesync.app/join/${ride.code}`;
+  const myRoleBadge = document.getElementById('lobbyMyRoleBadge');
+  if (myRoleBadge) {
+    myRoleBadge.innerText = isLead ? '👑 Ride Lead' : '🏍️ Group Member';
+    myRoleBadge.style.background = isLead ? 'rgba(255,107,0,0.15)' : 'rgba(0,229,255,0.15)';
+    myRoleBadge.style.color = isLead ? 'var(--primary-orange)' : 'var(--accent-cyan)';
+    myRoleBadge.style.borderColor = isLead ? 'rgba(255,107,0,0.3)' : 'rgba(0,229,255,0.3)';
+  }
 
   const dateTimeEl = document.getElementById('lobbyRideDateTime');
-  if (dateTimeEl) dateTimeEl.innerText = `${ride.date || 'Today'} · ${ride.time || '05:00'} Departure`;
+  if (dateTimeEl) {
+    dateTimeEl.innerText = `${ride.date || 'Today'} · ${ride.time || '06:00'} Departure &bull; ${ride.distanceKm || 0} km`;
+  }
 
+  const startSummary = document.getElementById('lobbyStartSummary');
+  if (startSummary) startSummary.innerText = (ride.startAddress || ride.start_address || 'Start').split(',')[0];
+
+  const destSummary = document.getElementById('lobbyDestSummary');
+  if (destSummary) destSummary.innerText = (ride.destAddress || ride.dest_address || 'Destination').split(',')[0];
+
+  // 2. Share Links
+  const fullJoinUrl = `${window.location.origin}/?join=${ride.code}`;
+  const inviteEl = document.getElementById('lobbyInviteLink');
+  if (inviteEl) inviteEl.innerText = fullJoinUrl;
+
+  // 3. Permission Notice
+  const permissionBanner = document.getElementById('lobbyPermissionBanner');
+  const permissionText = document.getElementById('lobbyPermissionText');
+  if (permissionBanner && permissionText) {
+    if (isLead) {
+      permissionText.innerHTML = `<strong>Lead Privileges Active:</strong> You can approve riders, manage stops, and launch the live ride.`;
+    } else {
+      permissionText.innerHTML = `<strong>Read-Only Member:</strong> Waiting for Lead (<strong style="color:var(--primary-orange);">Lead</strong>) to start the journey.`;
+    }
+  }
+
+  // 4. Split Members into Approved & Pending
+  const dbProfiles = RideSyncDB.getProfiles();
+  const members = ride.members || [];
+  const approvedMembers = members.filter(m => m.status === 'ready' || m.status === 'active' || m.role === 'creator' || m.isLead);
+  const pendingMembers = members.filter(m => m.status === 'pending');
+
+  // Check current user status
+  const myMemberEntry = members.find(m => m.userId === activeUser.id);
+  const isMyMembershipPending = !isLead && myMemberEntry && myMemberEntry.status === 'pending';
+
+  // 5. Pending Join Requests (Visible to Lead only)
+  const pendingSection = document.getElementById('lobbyPendingRequestsSection');
+  const pendingCountEl = document.getElementById('pendingRequestsCount');
+  const pendingContainer = document.getElementById('pendingRidersContainer');
+
+  if (pendingSection && pendingContainer) {
+    if (isLead && pendingMembers.length > 0) {
+      pendingSection.style.display = 'block';
+      if (pendingCountEl) pendingCountEl.innerText = pendingMembers.length;
+
+      pendingContainer.innerHTML = pendingMembers.map(m => {
+        const p = dbProfiles.find(prof => prof.id === m.userId) || { name: 'Rider', bikeModel: 'Motorcycle', avatar: 'R', avatarColor: '#00E5FF', phone: '' };
+        return `
+          <div class="pending-rider-card">
+            <div class="pending-rider-left">
+              <div class="account-avatar" style="background:${p.avatarColor || '#00E5FF'}; width:36px; height:36px; font-size:14px;">${p.avatar || p.name[0]}</div>
+              <div>
+                <span style="font-size:13px; font-weight:700; color:var(--text-primary); display:block;">${p.name}</span>
+                <span style="font-size:11px; color:var(--text-secondary);">${p.bikeModel} &bull; ${p.phone || ''}</span>
+              </div>
+            </div>
+            <div class="pending-rider-actions">
+              <button class="btn-approve-sm" onclick="handleLeadApprove('${m.userId}')">✅ Approve</button>
+              <button class="btn-decline-sm" onclick="handleLeadDecline('${m.userId}')">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      pendingSection.style.display = 'none';
+    }
+  }
+
+  // 6. Approved Riders List
   const ridersListContainer = document.getElementById('lobbyRiderListContainer');
   const countHeader = document.getElementById('lobbyRidersCountHeader');
   const readyBadge = document.getElementById('lobbyReadyBadge');
 
+  if (countHeader) countHeader.innerText = `Approved Riders (${approvedMembers.length})`;
+  if (readyBadge) readyBadge.innerText = `${approvedMembers.length} Ready`;
+
   if (ridersListContainer) {
-    const dbProfiles = RideSyncDB.getProfiles();
-    const members = ride.members || [];
-    const readyCount = members.filter(m => m.status === 'ready').length;
-
-    if (countHeader) countHeader.innerText = `Riders Joined (${members.length})`;
-    if (readyBadge) readyBadge.innerText = `${readyCount} Ready`;
-
-    ridersListContainer.innerHTML = members.map(m => {
+    ridersListContainer.innerHTML = approvedMembers.map(m => {
       const p = dbProfiles.find(prof => prof.id === m.userId) || {
         name: 'Rider',
         bikeModel: 'Motorcycle',
         avatar: 'R',
         avatarColor: '#FF6B00'
       };
-      const isReady = m.status === 'ready';
+      const isRiderLead = m.isLead || m.role === 'creator' || ride.creator_id === m.userId || ride.creatorId === m.userId;
 
       return `
         <div class="lobby-rider-card">
-          <div class="avatar-ring ${isReady ? 'is-ready' : 'is-not-ready'}" style="border-color:${p.avatarColor || '#FF6B00'}">
+          <div class="avatar-ring is-ready" style="border-color:${p.avatarColor || '#FF6B00'}">
             <span>${p.avatar || p.name[0]}</span>
           </div>
           <div class="rider-info">
-            <span class="rider-name">${p.name} ${m.isLead || m.role === 'creator' ? '(Lead / Creator)' : ''}</span>
+            <span class="rider-name">${p.name} ${isRiderLead ? '<strong style="color:var(--primary-orange);">(Lead)</strong>' : ''}</span>
             <span class="rider-bike">${p.bikeModel}</span>
           </div>
-          <span class="status-pill ${isReady ? 'ready' : 'not-ready'}">${isReady ? 'Ready' : 'Joined'}</span>
+          <span class="status-pill ready">${isRiderLead ? '👑 Lead' : '✓ Ready'}</span>
         </div>
       `;
     }).join('');
   }
+
+  // 7. Bottom Action Button
+  const btnStart = document.getElementById('btnStartLiveRide');
+  const waitingHint = document.getElementById('lobbyWaitingHint');
+
+  if (isLead) {
+    if (btnStart) {
+      btnStart.style.display = 'block';
+      btnStart.disabled = false;
+      btnStart.innerText = '🚀 START LIVE RIDE NOW';
+    }
+    if (waitingHint) waitingHint.style.display = 'none';
+  } else if (isMyMembershipPending) {
+    if (btnStart) {
+      btnStart.style.display = 'block';
+      btnStart.disabled = true;
+      btnStart.innerText = '⏳ JOIN REQUEST PENDING APPROVAL';
+      btnStart.style.background = '#374151';
+    }
+    if (waitingHint) {
+      waitingHint.style.display = 'block';
+      waitingHint.innerText = '⏳ The Ride Lead has been notified. You will enter the lobby once approved.';
+    }
+  } else {
+    // Approved Member
+    if (btnStart) {
+      btnStart.style.display = 'block';
+      btnStart.disabled = true;
+      btnStart.innerText = '⏳ WAITING FOR LEAD TO START RIDE';
+      btnStart.style.background = '#1E293B';
+    }
+    if (waitingHint) {
+      waitingHint.style.display = 'block';
+      waitingHint.innerText = '🏍️ All set! Keep your gear on. The cockpit will automatically launch when Lead starts the ride.';
+    }
+  }
+}
+
+// Lead Approves a Pending Member
+async function handleLeadApprove(userId) {
+  const activeUser = RideSyncDB.getActiveUser();
+  await RideSyncDB.approveMember(state.currentRideId, userId, activeUser.id, 'approve');
+  showToast('✅ Rider approved and added to lobby!', 'success');
+  refreshLobbyData();
+}
+
+// Lead Declines a Pending Member
+async function handleLeadDecline(userId) {
+  const activeUser = RideSyncDB.getActiveUser();
+  await RideSyncDB.approveMember(state.currentRideId, userId, activeUser.id, 'decline');
+  showToast('❌ Join request declined', 'info');
+  refreshLobbyData();
+}
+
+// Lead Launches the Live Ride
+async function handleStartLiveRide() {
+  const activeUser = RideSyncDB.getActiveUser();
+  const res = await RideSyncDB.startLiveRide(state.currentRideId, activeUser.id);
+  
+  // Broadcast to all WebSocket members
+  PayanamRealtime.broadcast({ type: 'ride_started', rideId: state.currentRideId });
+
+  startLiveRideSession();
 }
 
 function startLiveRideSession() {
   navigateTo('screenLiveMap');
-  showToast('🚀 Ride Started! GPS Telemetry Broadcasting Live', 'success');
+  showToast('🚀 Live Ride Active! GPS Telemetry & Cockpit Engaged', 'success');
 }
 
-function shareRideCode() {
-  const code = state.currentRide?.code || 'KODAI26';
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(`Join my motorcycle ride on RideSync! Invite Code: ${code}`);
+// Refresh Lobby Data from Server or Local DB
+async function refreshLobbyData() {
+  const apiBase = RideSyncDB.getApiBaseUrl();
+  try {
+    const res = await fetch(`${apiBase}/rides`);
+    if (res.ok) {
+      const rides = await res.json();
+      const current = rides.find(r => r.id === state.currentRideId);
+      if (current) {
+        state.currentRide = current;
+        if (state.activeScreen === 'screenRideLobby') {
+          renderRideLobby();
+        }
+      }
+    }
+  } catch(e) {}
+}
+
+// Real-time WebSocket Protocol & Event Handler
+const PayanamRealtime = (function () {
+  let socket = null;
+  let subscribedRideId = null;
+  let pollInterval = null;
+
+  function getWsUrl() {
+    const apiBase = RideSyncDB.getApiBaseUrl();
+    return apiBase.replace(/^http/, 'ws').replace(/\/api$/, '') + '/ws';
   }
-  showToast(`📋 Copied Ride Code "${code}" to clipboard!`, 'success');
+
+  function connect(rideId) {
+    if (!rideId) return;
+    subscribedRideId = rideId;
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'subscribe', rideId }));
+      return;
+    }
+
+    try {
+      socket = new WebSocket(getWsUrl());
+      socket.onopen = () => {
+        console.log('[Payanam WS] Connected to live lobby gateway for ride:', rideId);
+        socket.send(JSON.stringify({ type: 'subscribe', rideId }));
+      };
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleRealtimeMessage(msg);
+        } catch (e) {}
+      };
+      socket.onerror = (e) => console.warn('[Payanam WS] Gateway error:', e);
+      socket.onclose = () => console.log('[Payanam WS] Gateway closed');
+    } catch (e) {
+      console.warn('[Payanam WS] Realtime connection fallback:', e);
+    }
+
+    // Polling fallback every 3s
+    clearInterval(pollInterval);
+    pollInterval = setInterval(() => {
+      if (state.activeScreen === 'screenRideLobby' && state.currentRideId) {
+        refreshLobbyData();
+      }
+    }, 3000);
+  }
+
+  function broadcast(data) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ ...data, rideId: subscribedRideId }));
+    }
+  }
+
+  return { connect, broadcast };
+})();
+
+// Real-time Event Dispatcher
+function handleRealtimeMessage(msg) {
+  console.log('[Payanam Realtime Event]', msg);
+  const activeUser = RideSyncDB.getActiveUser();
+
+  if (msg.type === 'join_request') {
+    const isLead = state.currentRide && (state.currentRide.creator_id === activeUser.id || state.currentRide.creatorId === activeUser.id);
+    if (isLead && msg.user) {
+      // Prompt Lead with Join Request Modal
+      activePromptRequest = msg;
+      const avatarEl = document.getElementById('promptRiderAvatar');
+      const nameEl = document.getElementById('promptRiderName');
+      const bikeEl = document.getElementById('promptRiderBike');
+      const phoneEl = document.getElementById('promptRiderPhone');
+
+      if (avatarEl) {
+        avatarEl.innerText = msg.user.avatar || msg.user.name[0];
+        avatarEl.style.background = msg.user.avatarColor || '#00E5FF';
+      }
+      if (nameEl) nameEl.innerText = msg.user.name;
+      if (bikeEl) bikeEl.innerText = msg.user.bikeModel || msg.user.bike_model || 'Motorcycle';
+      if (phoneEl) phoneEl.innerText = msg.user.phoneFormatted || msg.user.phone || '';
+
+      openModal('modalJoinApprovalPrompt');
+      showToast(`🔔 ${msg.user.name} requested to join the ride!`, 'info');
+    }
+    refreshLobbyData();
+  } else if (msg.type === 'member_approved') {
+    if (msg.userId === activeUser.id) {
+      closeModal('modalJoinRequestStatus');
+      showToast('🎉 Your join request was approved by the Lead!', 'success');
+    }
+    refreshLobbyData();
+  } else if (msg.type === 'member_declined') {
+    if (msg.userId === activeUser.id) {
+      closeModal('modalJoinRequestStatus');
+      showToast('❌ Join request was declined by the Lead.', 'error');
+      navigateTo('screenHome');
+    }
+    refreshLobbyData();
+  } else if (msg.type === 'ride_started') {
+    if (state.activeScreen === 'screenRideLobby') {
+      showToast('🚀 Lead launched the ride! Entering live map cockpit...', 'success');
+      startLiveRideSession();
+    }
+  }
 }
 
+function handlePromptApprove() {
+  if (activePromptRequest && activePromptRequest.user) {
+    handleLeadApprove(activePromptRequest.user.id);
+  }
+  closeModal('modalJoinApprovalPrompt');
+}
+
+function handlePromptDecline() {
+  if (activePromptRequest && activePromptRequest.user) {
+    handleLeadDecline(activePromptRequest.user.id);
+  }
+  closeModal('modalJoinApprovalPrompt');
+}
+
+// Join Ride Submission (via Modal or URL)
+async function submitJoinRide() {
+  const codeInput = document.getElementById('inputJoinRideCode');
+  const code = (codeInput?.value || '').trim();
+  if (!code) {
+    showToast('⚠️ Please enter a valid ride code', 'error');
+    return;
+  }
+
+  const activeUser = RideSyncDB.getActiveUser();
+  const res = await RideSyncDB.joinRide(code, activeUser.id);
+
+  if (res.success) {
+    state.currentRideId = res.ride.id;
+    state.currentRide = res.ride;
+    closeModal('modalJoinRide');
+
+    PayanamRealtime.connect(res.ride.id);
+    navigateTo('screenRideLobby');
+
+    if (res.status === 'pending') {
+      const leadProfile = RideSyncDB.getProfile(res.ride.creator_id || res.ride.creatorId);
+      const leadNameEl = document.getElementById('pendingLeadName');
+      if (leadNameEl) leadNameEl.innerText = leadProfile ? leadProfile.name : 'Ride Lead';
+      openModal('modalJoinRequestStatus');
+    } else {
+      showToast(`🏍️ ${res.message || 'Joined ride lobby!'}`, 'success');
+    }
+  } else {
+    showToast(`❌ ${res.error}`, 'error');
+  }
+}
+
+// Share Functions
 function copyInviteLink() {
-  shareRideCode();
+  const code = state.currentRide?.code || 'KODAI26';
+  const url = `${window.location.origin}/?join=${code}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url);
+  }
+  showToast(`📋 Copied Invite Link: ${url}`, 'success');
+}
+
+function shareViaWhatsApp() {
+  const ride = state.currentRide;
+  const code = ride?.code || 'KODAI26';
+  const url = `${window.location.origin}/?join=${code}`;
+  const text = encodeURIComponent(`🏍️ Join our motorcycle group ride "${ride?.name || 'Ride'}" on Payanam!\n\n🔑 Code: ${code}\n👉 Join link: ${url}`);
+  window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
 }
 
 // -------------------------------------------------------------
