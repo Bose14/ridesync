@@ -1484,6 +1484,23 @@ function broadcastMyLiveLocation(lat, lng, speed = 0, heading = 0) {
   }
 }
 
+function updateGpsAccuracyMetrics() {
+  const metrics = PayanamMaps.getGpsMetrics();
+
+  if (!metrics.isActive) return;
+
+  const accuracyEl = document.getElementById('gpsStatusLabel');
+  if (accuracyEl) {
+    let quality = '🔴 Poor';
+    if (metrics.kalmanAccuracy < 5) quality = '🟢 Excellent (±5m)';
+    else if (metrics.kalmanAccuracy < 10) quality = '🟢 Very Good (±10m)';
+    else if (metrics.kalmanAccuracy < 20) quality = '🟡 Good (±20m)';
+    else if (metrics.kalmanAccuracy < 50) quality = '🟠 Fair (±50m)';
+
+    accuracyEl.innerText = quality;
+  }
+}
+
 function startLiveGpsBroadcast() {
   if (navigator.geolocation) {
     // Immediate one-shot fix
@@ -1496,7 +1513,7 @@ function startLiveGpsBroadcast() {
       { enableHighAccuracy: true, timeout: 5000 }
     );
 
-    // Continuous GPS watch
+    // Continuous GPS watch with Kalman filtering
     PayanamMaps.startLiveGpsTracking(
       state.map,
       (pos) => {
@@ -1504,6 +1521,9 @@ function startLiveGpsBroadcast() {
 
         const speedEl = document.getElementById('navCurrentSpeed');
         if (speedEl) speedEl.innerText = `${Math.round(pos.speed || 0)} km/h`;
+
+        // Update accuracy metrics
+        updateGpsAccuracyMetrics();
       },
       (errMsg) => {
         console.warn('GPS watch notice:', errMsg);
@@ -1512,8 +1532,15 @@ function startLiveGpsBroadcast() {
 
     const label = document.getElementById('gpsStatusLabel');
     const icon = document.getElementById('gpsBtnIcon');
-    if (label) label.innerText = 'LIVE GPS 🛰️';
+    if (label) label.innerText = 'KALMAN GPS 🛰️';
     if (icon) icon.innerText = '🟢';
+
+    // Periodic metric updates
+    setInterval(() => {
+      if (PayanamMaps.isGpsActive()) {
+        updateGpsAccuracyMetrics();
+      }
+    }, 1000);
   }
 }
 

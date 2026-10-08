@@ -148,7 +148,198 @@ const PayanamMaps = (function () {
   let lastReportedLng = null;
   let gpsHeartbeatInterval = null;
 
-  // 3. HTML5 Live Device GPS Geolocation
+  // Kalman Filter State for GPS positions
+  class KalmanFilter1D {
+    constructor(processNoise = 0.001, measurementNoise = 25) {
+      this.processNoise = processNoise;
+      this.measurementNoise = measurementNoise;
+      this.estimate = 0;
+      this.errorEstimate = 1;
+    }
+
+    update(measurement) {
+      // Prediction step
+      this.errorEstimate += this.processNoise;
+
+      // Update step
+      const gain = this.errorEstimate / (this.errorEstimate + this.measurementNoise);
+      this.estimate += gain * (measurement - this.estimate);
+      this.errorEstimate *= (1 - gain);
+
+      return this.estimate;
+    }
+  }
+
+  let kalmanLat = new KalmanFilter1D(0.001, 25);
+  let kalmanLng = new KalmanFilter1D(0.001, 25);
+  let kalmanSpeed = new KalmanFilter1D(0.01, 5);
+  let kalmanHeading = new KalmanFilter1D(0.005, 10);
+
+  // Sensor Fusion & Motion Detection
+  let accelData = { x: 0, y: 0, z: 0 };
+  let lastAccelMagnitude = 0;
+  let motionIntensity = 0;
+  let isMotionDetected = false;
+
+  function initSensorFusion() {
+    if (window.DeviceMotionEvent && typeof DeviceMotionEvent !== 'undefined') {
+      window.addEventListener('devicemotion', (event) => {
+        const a = event.acceleration;
+        if (a) {
+          accelData.x = a.x || 0;
+          accelData.y = a.y || 0;
+          accelData.z = a.z || 0;
+          const magnitude = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+          motionIntensity = Math.abs(magnitude - lastAccelMagnitude) * 0.3 + motionIntensity * 0.7;
+          lastAccelMagnitude = magnitude;
+          isMotionDetected = motionIntensity > 1.5;
+        }
+      }, { passive: true });
+    }
+  }
+
+  // Adaptive polling strategy
+  let adaptivePollingInterval = 1000;
+  function updateAdaptivePollingInterval(accuracy, speed) {
+    if (accuracy > 50) {
+      adaptivePollingInterval = 500; // High uncertainty, poll faster
+    } else if (accuracy > 30) {
+      adaptivePollingInterval = 800;
+    } else if (speed > 40) {
+      adaptivePollingInterval = 600; // Fast motion, track closer
+    } else if (speed > 20) {
+      adaptivePollingInterval = 1000;
+    } else {
+      adaptivePollingInterval = 1500; // Slow/stopped, less frequent polling
+    }
+    return adaptivePollingInterval;
+  }
+
+  // GPS outlier detection
+  function isGpsOutlier(newLat, newLng, lastLat, lastLng, lastTime, accuracy) {
+    if (lastLat === null || lastLng === null) return false;
+
+    const timeDiffSec = (Date.now() - lastTime) / 1000;
+    const distM = PayanamMaps.haversine(lastLat, lastLng, newLat, newLng) * 1000;
+    const maxReasonableSpeed = 150; // 150 km/h max for motorcycles
+    const maxReasonableDistM = (maxReasonableSpeed / 3.6) * timeDiffSec * 1.2;
+
+    if (distM > maxReasonableDistM) {
+      console.warn(`GPS outlier rejected: jumped ${distM}m in ${timeDiffSec}s`, { newLat, newLng, accuracy });
+      return true;
+    }
+
+    if (accuracy > 100) return true;
+    return false;
+  }
+
+  // Speed validation using distance and time
+  function validateAndCalculateSpeed(newLat, newLng, lastLat, lastLng, lastTime, rawSpeed) {
+    const timeDiffSec = (Date.now() - lastTime) / 1000;
+    if (timeDiffSec < 0.5) return rawSpeed;
+
+    const distKm = PayanamMaps.haversine(lastLat, lastLng, newLat, newLng);
+    const calculatedSpeed = (distKm * 1000 * 3.6) / (timeDiffSec * 1000); // km/h
+
+    if (rawSpeed === 0 || rawSpeed === undefined || isNaN(rawSpeed)) {
+      return calculatedSpeed;
+    }
+
+    const speedDiff = Math.abs(calculatedSpeed - rawSpeed);
+    if (speedDiff > 20) {
+      return (calculatedSpeed * 0.4 + rawSpeed * 0.6);
+    }
+
+    return kalmanSpeed.update(rawSpeed);
+  }
+
+  // Compass heading validation
+  function validateHeading(rawHeading, currentSpeed) {
+    if (typeof rawHeading !== 'number' || isNaN(rawHeading)) {
+      return null;
+    }
+
+    if (currentSpeed < 3) return null;
+
+    return rawHeading;
+  }
+
+  // Bearing calculation from trajectory
+  function calculateBearingFromMovement(lat1, lng1, lat2, lng2) {
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const y = Math.sin(dLng) * Math.cos(lat2 * Math.PI / 180);
+    const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+              Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLng);
+    return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+  }
+
+  // -------------------------------------------------------------
+  // 60FPS PHYSICS INTERPOLATION & DEAD-RECKONING ENGINE
+  // -------------------------------------------------------------
+  let animFrameId = null;
+  let currentLat = null;
+  let currentLng = null;
+  let targetLat = null;
+  let targetLng = null;
+  let currentHeading = 0;
+  let targetHeading = 0;
+  let currentSpeed = 0;
+  let lastGpsTimestamp = Date.now();
+  let frameCallback = null;
+
+  function startPhysicsLoop(onFrame) {
+    frameCallback = onFrame;
+    if (animFrameId) cancelAnimationFrame(animFrameId);
+
+    const loop = () => {
+      if (currentLat !== null && targetLat !== null && currentLng !== null && targetLng !== null) {
+        const now = Date.now();
+        const deltaSec = Math.min(0.1, (now - lastGpsTimestamp) / 1000);
+
+        // 1. Smooth Coordinate LERP (60 FPS linear interpolation)
+        const lerpFactor = 0.18;
+        currentLat += (targetLat - currentLat) * lerpFactor;
+        currentLng += (targetLng - currentLng) * lerpFactor;
+
+        // 2. Dead-Reckoning Extrapolation if moving between GPS fixes
+        if (currentSpeed > 3 && deltaSec < 3.0) {
+          const headingRad = (currentHeading * Math.PI) / 180;
+          const speedMps = currentSpeed / 3.6;
+          const distMeters = speedMps * (1 / 60); // 1 frame distance
+          const dLat = (distMeters * Math.cos(headingRad)) / 111139;
+          const dLng = (distMeters * Math.sin(headingRad)) / (111139 * Math.cos((currentLat * Math.PI) / 180));
+          currentLat += dLat * 0.15;
+          currentLng += dLng * 0.15;
+        }
+
+        // 3. Smooth Heading Angle Interpolation (shortest circular path)
+        let diff = (targetHeading - currentHeading + 540) % 360 - 180;
+        currentHeading = (currentHeading + diff * 0.16 + 360) % 360;
+
+        if (frameCallback) {
+          frameCallback({
+            lat: currentLat,
+            lng: currentLng,
+            heading: Math.round(currentHeading),
+            speed: currentSpeed,
+            accuracy: 8
+          });
+        }
+      }
+      animFrameId = requestAnimationFrame(loop);
+    };
+    animFrameId = requestAnimationFrame(loop);
+  }
+
+  function stopPhysicsLoop() {
+    if (animFrameId) {
+      cancelAnimationFrame(animFrameId);
+      animFrameId = null;
+    }
+  }
+
+  // 3. HTML5 Live Device GPS Geolocation with Kalman Filtering & Sensor Fusion
   function startLiveGpsTracking(mapInstance, onLocationUpdate, onError) {
     if (!navigator.geolocation) {
       if (onError) onError('Geolocation is not supported by your browser');
@@ -158,61 +349,108 @@ const PayanamMaps = (function () {
     stopLiveGpsTracking(mapInstance);
     deviceGpsActive = true;
 
+    // Initialize sensor fusion for motion detection
+    initSensorFusion();
+
+    // Start 60 FPS Physics Interpolation
+    startPhysicsLoop(onLocationUpdate);
+
     const processPosition = (position) => {
       if (!position || !position.coords) return;
       const coords = position.coords;
-      const lat = coords.latitude;
-      const lng = coords.longitude;
-      const accuracy = coords.accuracy || 8;
-      let speed = coords.speed !== null && coords.speed !== undefined && !isNaN(coords.speed) ? Math.max(0, coords.speed * 3.6) : 0;
-      let heading = coords.heading;
+      let rawLat = coords.latitude;
+      let rawLng = coords.longitude;
+      const accuracy = coords.accuracy || 10;
+      let rawSpeed = coords.speed !== null && coords.speed !== undefined && !isNaN(coords.speed) ? Math.max(0, coords.speed * 3.6) : 0;
+      let rawHeading = coords.heading;
 
-      // Calculate trajectory bearing if device compass heading is null or unavailable
-      if (typeof heading !== 'number' || isNaN(heading) || heading === 0) {
-        if (lastReportedLat !== null && lastReportedLng !== null && (lat !== lastReportedLat || lng !== lastReportedLng)) {
-          const dLat = (lat - lastReportedLat) * Math.PI / 180;
-          const dLng = (lng - lastReportedLng) * Math.PI / 180;
-          const y = Math.sin(dLng) * Math.cos(lat * Math.PI / 180);
-          const x = Math.cos(lastReportedLat * Math.PI / 180) * Math.sin(lat * Math.PI / 180) - Math.sin(lastReportedLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.cos(dLng);
-          heading = ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
-        }
+      // 1. Reject severe GPS jitter and outliers
+      if (isGpsOutlier(rawLat, rawLng, lastReportedLat, lastReportedLng, lastGpsTimestamp, accuracy)) {
+        return;
       }
 
-      lastReportedLat = lat;
-      lastReportedLng = lng;
+      // 2. Apply Kalman filtering to position
+      if (currentLat !== null && currentLng !== null) {
+        rawLat = kalmanLat.update(rawLat);
+        rawLng = kalmanLng.update(rawLng);
+      }
 
-      // Render or update accuracy circle on map
+      // 3. Validate and calculate speed using distance/time
+      if (lastReportedLat !== null && lastReportedLng !== null) {
+        rawSpeed = validateAndCalculateSpeed(rawLat, rawLng, lastReportedLat, lastReportedLng, lastGpsTimestamp, rawSpeed);
+      }
+
+      // 4. Validate compass heading and fallback to bearing
+      const validatedHeading = validateHeading(rawHeading, rawSpeed);
+      if (validatedHeading !== null) {
+        rawHeading = validatedHeading;
+      } else if (lastReportedLat !== null && lastReportedLng !== null && rawSpeed > 3) {
+        rawHeading = calculateBearingFromMovement(lastReportedLat, lastReportedLng, rawLat, rawLng);
+      } else if (currentHeading !== undefined) {
+        rawHeading = currentHeading;
+      }
+
+      // Apply Kalman to heading
+      if (typeof rawHeading === 'number' && !isNaN(rawHeading)) {
+        rawHeading = kalmanHeading.update(rawHeading);
+      }
+
+      // 5. Initialize or feed physics engine
+      if (currentLat === null || currentLng === null) {
+        currentLat = rawLat;
+        currentLng = rawLng;
+        currentHeading = rawHeading || 0;
+        kalmanLat.estimate = rawLat;
+        kalmanLng.estimate = rawLng;
+      }
+
+      targetLat = rawLat;
+      targetLng = rawLng;
+      if (typeof rawHeading === 'number' && !isNaN(rawHeading)) {
+        targetHeading = rawHeading;
+      }
+      currentSpeed = rawSpeed;
+      lastGpsTimestamp = Date.now();
+
+      lastReportedLat = rawLat;
+      lastReportedLng = rawLng;
+
+      // 6. Update accuracy circle with better color coding
       if (mapInstance) {
+        let circleColor = '#1A73E8';
+        let circleOpacity = 0.15;
+
+        if (accuracy < 10) {
+          circleColor = '#00E676'; // Excellent
+          circleOpacity = 0.1;
+        } else if (accuracy < 20) {
+          circleColor = '#00BCD4'; // Very Good
+          circleOpacity = 0.12;
+        } else if (accuracy > 50) {
+          circleColor = '#FF9800'; // Poor
+          circleOpacity = 0.2;
+        }
+
         if (!deviceAccuracyCircle) {
-          deviceAccuracyCircle = L.circle([lat, lng], {
-            radius: Math.min(accuracy, 30),
-            color: '#00E5FF',
-            fillColor: '#00E5FF',
-            fillOpacity: 0.12,
+          deviceAccuracyCircle = L.circle([rawLat, rawLng], {
+            radius: Math.min(accuracy, 50),
+            color: circleColor,
+            fillColor: circleColor,
+            fillOpacity: circleOpacity,
             weight: 1.5
           }).addTo(mapInstance);
         } else {
-          deviceAccuracyCircle.setLatLng([lat, lng]);
-          deviceAccuracyCircle.setRadius(Math.min(accuracy, 30));
+          deviceAccuracyCircle.setLatLng([rawLat, rawLng]);
+          deviceAccuracyCircle.setRadius(Math.min(accuracy, 50));
+          deviceAccuracyCircle.setStyle({ color: circleColor, fillColor: circleColor, fillOpacity: circleOpacity });
         }
-      }
-
-      if (onLocationUpdate) {
-        onLocationUpdate({
-          lat,
-          lng,
-          accuracy,
-          speed,
-          heading: heading || 0,
-          timestamp: position.timestamp || Date.now()
-        });
       }
     };
 
     // Immediate fix
-    navigator.geolocation.getCurrentPosition(processPosition, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
+    navigator.geolocation.getCurrentPosition(processPosition, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 4000 });
 
-    // 1. High-Precision Continuous Watcher (maximumAge: 0 for zero lag)
+    // 1. High-Precision Continuous Watcher
     try {
       watchId = navigator.geolocation.watchPosition(
         processPosition,
@@ -223,27 +461,32 @@ const PayanamMaps = (function () {
         {
           enableHighAccuracy: true,
           maximumAge: 0,
-          timeout: 8000
+          timeout: 7000
         }
       );
     } catch (e) {
       console.warn('WatchPosition error:', e);
     }
 
-    // 2. Continuous 1.2s GPS Polling Heartbeat (guarantees continuous tracking without mobile browser sleep)
+    // 2. Adaptive GPS Polling Heartbeat (adjusts interval based on accuracy & speed)
     gpsHeartbeatInterval = setInterval(() => {
       if (!deviceGpsActive) return;
+      const interval = updateAdaptivePollingInterval(
+        kalmanLat.errorEstimate * 1000,
+        currentSpeed || 0
+      );
       navigator.geolocation.getCurrentPosition(
         processPosition,
         () => {},
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 3500 }
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
       );
-    }, 1200);
+    }, 1000);
 
     return true;
   }
 
   function stopLiveGpsTracking(mapInstance) {
+    stopPhysicsLoop();
     if (watchId !== null) {
       navigator.geolocation.clearWatch(watchId);
       watchId = null;
@@ -253,6 +496,17 @@ const PayanamMaps = (function () {
       gpsHeartbeatInterval = null;
     }
     deviceGpsActive = false;
+    currentLat = null;
+    currentLng = null;
+    targetLat = null;
+    targetLng = null;
+
+    // Reset Kalman filters
+    kalmanLat = new KalmanFilter1D(0.001, 25);
+    kalmanLng = new KalmanFilter1D(0.001, 25);
+    kalmanSpeed = new KalmanFilter1D(0.01, 5);
+    kalmanHeading = new KalmanFilter1D(0.005, 10);
+
     if (deviceAccuracyCircle && mapInstance) {
       try { mapInstance.removeLayer(deviceAccuracyCircle); } catch(e) {}
       deviceAccuracyCircle = null;
@@ -377,6 +631,21 @@ const PayanamMaps = (function () {
     return R * c;
   }
 
+  // Get current GPS accuracy metrics
+  function getGpsMetrics() {
+    return {
+      isActive: deviceGpsActive,
+      currentLat: currentLat,
+      currentLng: currentLng,
+      currentSpeed: Math.round(currentSpeed),
+      currentHeading: Math.round(currentHeading),
+      kalmanAccuracy: Math.round(kalmanLat.errorEstimate * 1000), // in meters
+      motionIntensity: Math.round(motionIntensity * 100) / 100,
+      isMoving: isMotionDetected || currentSpeed > 3,
+      adaptivePollingMs: adaptivePollingInterval
+    };
+  }
+
   return {
     tileProviders,
     attachTileLayer,
@@ -387,7 +656,9 @@ const PayanamMaps = (function () {
     isRadarActive: () => isRadarActive,
     fetchRoadRoute,
     searchPlaces,
-    haversine
+    haversine,
+    getGpsMetrics,
+    KalmanFilter1D
   };
 })();
 

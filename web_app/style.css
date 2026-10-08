@@ -1145,65 +1145,224 @@ body {
   justify-content: center;
 }
 
-/* Live Turn-by-Turn Navigation Bar */
-.live-nav-banner {
+/* ====================================================================
+   AUTHENTIC GOOGLE MAPS NAVIGATION HUD & COCKPIT STYLES
+   ==================================================================== */
+
+/* 1. Google Maps Navigation Green Turn-by-Turn Header Banner */
+.gmaps-nav-header {
   position: absolute;
-  top: 72px;
-  left: 14px;
-  right: 14px;
-  background: rgba(21, 26, 35, 0.95);
-  border: 1px solid rgba(0, 229, 255, 0.4);
-  backdrop-filter: blur(12px);
-  border-radius: var(--radius-md);
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  background: linear-gradient(180deg, #137333 0%, #0d5224 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
   padding: 10px 14px;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 16px rgba(0, 229, 255, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(19, 115, 51, 0.5);
   z-index: 500;
+  color: #FFF;
 }
 
-.nav-maneuver-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--primary-orange), #E65100);
-  color: #FFF;
-  font-size: 22px;
-  font-weight: 800;
+.gmaps-maneuver-box {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 12px var(--primary-orange-glow);
+  min-width: 52px;
 }
 
-.nav-maneuver-info {
-  flex: 1;
+.gmaps-maneuver-glyph {
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+  color: #FFF;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
 }
 
-.nav-instruction {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.3;
-}
-
-.nav-sub-details {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.gmaps-maneuver-dist {
+  font-family: 'Outfit', sans-serif;
   font-size: 11px;
-  color: var(--text-secondary);
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #E6F4EA;
   margin-top: 2px;
 }
 
-.nav-speed-badge {
-  background: rgba(0, 230, 118, 0.2);
-  color: var(--accent-green);
-  font-weight: 800;
-  padding: 1px 6px;
-  border-radius: 4px;
+.gmaps-guidance-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.gmaps-street-name {
   font-family: 'Outfit', sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  color: #FFFFFF;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gmaps-next-step {
+  font-size: 11px;
+  color: #CEEAD6;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gmaps-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gmaps-btn-tool {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #FFF;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.gmaps-btn-tool:hover {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* 2. Google Maps Floating Speedometer Bubble (Bottom-Left) */
+.gmaps-speedometer-bubble {
+  position: absolute;
+  bottom: 84px;
+  left: 14px;
+  width: 58px;
+  height: 58px;
+  background: #FFFFFF;
+  color: #111827;
+  border-radius: 50%;
+  border: 3px solid #1E8E3E;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 12px rgba(30, 142, 62, 0.3);
+  z-index: 500;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.gmaps-speedometer-bubble:active {
+  transform: scale(0.92);
+}
+
+.gmaps-speed-value {
+  font-family: 'Outfit', sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  color: #111827;
+}
+
+.gmaps-speed-unit {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #5F6368;
+  margin-top: 1px;
+}
+
+/* 3. Google Maps Bottom Trip Summary Card */
+.gmaps-trip-bottom-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  background: #1E293B;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  z-index: 500;
+  backdrop-filter: blur(12px);
+}
+
+.gmaps-trip-summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.gmaps-trip-eta {
+  font-family: 'Outfit', sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  color: #34A853;
+  line-height: 1;
+}
+
+.gmaps-trip-meta {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94A3B8;
+  margin-top: 3px;
+}
+
+.gmaps-bottom-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gmaps-hud-btn {
+  background: #334155;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #F1F5F9;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 6px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+
+.gmaps-hud-btn.active-follow {
+  background: #1A73E8;
+  color: #FFF;
+  border-color: #4285F4;
+  box-shadow: 0 0 10px rgba(66, 133, 244, 0.4);
+}
+
+.gmaps-hud-btn.btn-exit-trip {
+  background: #DC2626;
+  color: #FFF;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.gmaps-hud-btn:active {
+  transform: scale(0.94);
 }
 
 /* Map Viewport */

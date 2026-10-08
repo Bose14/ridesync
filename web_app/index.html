@@ -392,48 +392,26 @@
           </div>
         </section>
 
-        <!-- SCREEN 4: LIVE RIDE MAP (PRIMARY SCREEN) -->
+        <!-- SCREEN 4: LIVE RIDE MAP (GOOGLE MAPS NAVIGATION COCKPIT) -->
         <section id="screenLiveMap" class="screen">
           
-          <!-- Live Top Floating Header -->
-          <div class="live-map-header">
-            <div class="live-left">
-              <button class="btn-header-back" onclick="confirmExitRide()">←</button>
-              <div>
-                <span class="live-status-pill">
-                  <span class="live-pulse"></span> <span id="gpsStatusLabel">LIVE SIM</span>
-                </span>
-                <h3 class="live-ride-heading" id="liveRideHeading">Kodaikanal Weekend Ride</h3>
-              </div>
+          <!-- Authentic Google Maps Turn-by-Turn Navigation Header Banner -->
+          <div class="gmaps-nav-header" id="liveNavBanner">
+            <div class="gmaps-maneuver-box">
+              <div class="gmaps-maneuver-glyph" id="navManeuverIcon">↱</div>
+              <div class="gmaps-maneuver-dist" id="navManeuverDist">400 m</div>
             </div>
-            <div class="live-header-actions">
-              <button class="btn-icon-map" id="btnToggleGps" title="Toggle Device GPS / Simulation" onclick="toggleDeviceGps()">
+            <div class="gmaps-guidance-content">
+              <div class="gmaps-street-name" id="navInstructionText">Turn Right onto NH44 / Salem Bypass</div>
+              <div class="gmaps-next-step" id="navNextStopCountdown">Then continue on planned motorcycle corridor</div>
+            </div>
+            <div class="gmaps-header-tools">
+              <button class="gmaps-btn-tool" id="btnToggleGps" title="Toggle Hardware GPS" onclick="toggleDeviceGps()">
                 <span id="gpsBtnIcon">📡</span>
               </button>
-              <button class="btn-icon-map" id="btnToggleRadar" title="Toggle Live Rain Radar Overlay" onclick="toggleRainRadarOverlay()">
+              <button class="gmaps-btn-tool" id="btnToggleRadar" title="Toggle Weather Radar" onclick="toggleRainRadarOverlay()">
                 <span>🌧️</span>
               </button>
-              <button class="btn-icon-map" id="mapThemeToggleBtn" title="Toggle Sunlight Day / Night Mode" onclick="toggleCockpitTheme()">
-                <span id="mapThemeIcon">☀️</span>
-              </button>
-              <button class="btn-icon-map" title="Toggle Simulation" onclick="toggleTelemetrySim()">
-                <span id="simBtnIcon">⏸️</span>
-              </button>
-              <button class="btn-icon-map" title="Ride Chat" onclick="toggleChatSheet()">
-                💬 <span class="badge-unread" id="unreadBadge">1</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Turn-by-Turn Maneuver Navigation Bar -->
-          <div class="live-nav-banner" id="liveNavBanner">
-            <div class="nav-maneuver-icon" id="navManeuverIcon">↱</div>
-            <div class="nav-maneuver-info">
-              <div class="nav-instruction" id="navInstructionText">In 800m, Turn Right onto NH44 / Salem Bypass</div>
-              <div class="nav-sub-details">
-                <span id="navNextStopCountdown">☕ Next Stop: Salem Halt (38.4 km)</span>
-                <span class="nav-speed-badge" id="navCurrentSpeed">68 km/h</span>
-              </div>
             </div>
           </div>
 
@@ -445,7 +423,13 @@
           <!-- Full Screen Map Viewport -->
           <div id="liveRideMap" class="map-viewport"></div>
 
-          <!-- F1 Timing Tower & Group Formation Telemetry (Floating Top HUD) -->
+          <!-- Google Maps Floating Speedometer Bubble (Bottom-Left) -->
+          <div class="gmaps-speedometer-bubble" id="gmapsSpeedometerBubble" onclick="toggleTelemetrySim()" title="Speedometer & Simulation Toggle">
+            <span class="gmaps-speed-value" id="navCurrentSpeed">0</span>
+            <span class="gmaps-speed-unit">KM/H</span>
+          </div>
+
+          <!-- F1 Timing Tower & Group Formation Telemetry (Collapsible Overlay) -->
           <div class="f1-telemetry-tower" id="f1TelemetryTower">
             <div class="f1-tower-header" onclick="toggleF1TowerCollapse()">
               <div class="f1-header-left">
@@ -459,34 +443,38 @@
             </div>
           </div>
 
-          <!-- Ultra-Clean Floating Bottom Riding Action Bar -->
-          <div class="live-floating-bottom-bar">
-            <div class="bottom-hud-actions">
-              <button class="btn-float-hud" id="btnFitAllHud" onclick="fitAllRidersInView()" title="Fit all group riders across locations">
-                👥 All Riders
+          <!-- Authentic Google Maps Bottom Trip Navigation Card -->
+          <div class="gmaps-trip-bottom-bar">
+            <div class="gmaps-trip-summary">
+              <div class="gmaps-trip-eta" id="navTripEta">28 min</div>
+              <div class="gmaps-trip-meta">
+                <span id="navTripDistance">14.8 km</span> &bull; <span id="navTripArrival">06:45 PM</span>
+              </div>
+            </div>
+            
+            <div class="gmaps-bottom-actions">
+              <button class="gmaps-hud-btn" id="btnCompassHud" onclick="toggleHeadingUpMode()" title="Toggle North-Up / Heading-Up Mode">
+                🧭 <span id="compassModeText">Follow</span>
               </button>
-              <button class="btn-float-hud active-follow" id="btnRecenterHud" onclick="recenterOnGroup()" title="Recenter Close-Up Ride Navigation (Zoom 18.5)">
-                🎯 Ride View
+              <button class="gmaps-hud-btn active-follow" id="btnRecenterHud" onclick="recenterOnGroup()" title="Recenter Close-Up Navigation (Zoom 18.5)">
+                🎯 Recenter
               </button>
-              <button class="btn-float-hud" id="btnCockpit3d" onclick="toggleCockpit3dPerspective()" title="Toggle 3D Cockpit Perspective / 2D Road View">
-                🕶️ 3D View
+              <button class="gmaps-hud-btn" id="btnCockpit3d" onclick="toggleCockpit3dPerspective()" title="Toggle 3D Perspective">
+                🕶️ 3D
               </button>
-              <button class="btn-float-hud" onclick="cycleMapLayer()" title="Switch Map Layer">
-                🗺️ Layer
+              <button class="gmaps-hud-btn" onclick="fitAllRidersInView()" title="Fit All Riders">
+                👥 Pack
               </button>
-              <button class="btn-float-hud" onclick="openAddPinDialog()" title="Drop Custom Pin">
-                📍 Drop Pin
-              </button>
-              <button class="btn-float-hud btn-hud-sos" onclick="triggerSosEmergency()" title="Emergency SOS Distress">
-                🚨 SOS
+              <button class="gmaps-hud-btn btn-exit-trip" onclick="confirmExitRide()" title="Exit Navigation">
+                ✕
               </button>
             </div>
-
-            <!-- Single Floating Chat Icon at Bottom Right -->
-            <button class="btn-float-chat" onclick="toggleChatSheet()" title="Group Messages">
-              💬 <span class="badge-unread" id="unreadBadge">0</span>
-            </button>
           </div>
+
+          <!-- Floating Chat Bubble -->
+          <button class="btn-float-chat" onclick="toggleChatSheet()" title="Group Messages">
+            💬 <span class="badge-unread" id="unreadBadge">0</span>
+          </button>
         </section>
 
         <!-- SCREEN 5: RIDE COMPLETED SUMMARY -->
