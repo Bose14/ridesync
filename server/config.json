@@ -1,6 +1,6 @@
 {
   "dbDriver": "local-sqlite",
-  "sqliteFile": "/var/data/payanam.db",
+  "sqliteFile": "server/payanam.db",
   "supabaseUrl": "",
   "supabaseAnonKey": "",
   "postgresUrl": ""
