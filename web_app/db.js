@@ -358,46 +358,55 @@ const RideSyncDB = (function () {
       const db = loadDb();
       return db.rides.find(r => r.id === idOrCode || r.code.toUpperCase() === (idOrCode || '').toUpperCase());
     },
-    createRide(rideData) {
+    async createRide(rideData) {
       const db = loadDb();
-      const currentUser = this.getActiveUser();
+      const currentUser = this.getActiveUser() || { id: 'usr-bose', name: 'Lead' };
+      const id = 'ride-' + Date.now();
+      const code = (rideData.name.replace(/[^A-Za-z]/g, '').slice(0, 5) + Math.floor(10 + Math.random() * 89)).toUpperCase();
+
       const newRide = {
-        id: 'ride-' + Date.now(),
-        code: (rideData.name.replace(/[^A-Za-z]/g, '').slice(0, 5) + Math.floor(10 + Math.random() * 89)).toUpperCase(),
+        id,
+        code,
         name: rideData.name || 'New Group Ride',
         description: rideData.description || 'Motorcycle group ride',
-        creatorId: currentUser ? currentUser.id : 'usr-bose',
+        creatorId: currentUser.id,
         date: rideData.date || new Date().toISOString().split('T')[0],
         time: rideData.time || '06:00',
-        status: 'active',
-        startAddress: rideData.startAddress || 'Bangalore',
+        status: 'lobby',
+        startAddress: rideData.startAddress || 'Start Point',
         startLat: rideData.startLat || 12.9176,
         startLng: rideData.startLng || 77.6233,
         destAddress: rideData.destAddress || 'Destination',
         destLat: rideData.destLat || 10.2185,
         destLng: rideData.destLng || 77.4682,
-        distanceKm: rideData.distanceKm || 320,
-        durationHours: rideData.durationHours || 8.0,
+        distanceKm: rideData.distanceKm || 0,
+        durationHours: rideData.durationHours || 0,
         members: [
           { userId: currentUser.id, role: 'creator', status: 'ready', isLead: true }
         ],
         waypoints: rideData.waypoints || [],
         pins: [],
         messages: [
-          { id: 'msg-' + Date.now(), type: 'system', text: `Ride "${rideData.name}" created by ${currentUser.name}`, time: 'Just now' }
+          { id: 'msg-' + Date.now(), type: 'system', text: `🏍️ Ride lobby created by ${currentUser.name}`, time: 'Just now' }
         ],
         createdAt: new Date().toISOString()
       };
+
       db.rides.unshift(newRide);
       saveDb(db);
 
-      // Sync with local server
+      // Sync with server
       try {
-        fetch(`${API_BASE}/rides`, {
+        const res = await fetch(`${API_BASE}/rides`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newRide)
-        }).catch(() => {});
+        });
+        const data = await res.json();
+        if (data.rideId && data.code) {
+          newRide.id = data.rideId;
+          newRide.code = data.code;
+        }
       } catch (e) {}
 
       return newRide;
@@ -424,33 +433,102 @@ const RideSyncDB = (function () {
       return null;
     },
 
-    joinRide(rideCode, userId, role = 'rider') {
+    async joinRide(rideCode, userId) {
       const db = loadDb();
-      const ride = db.rides.find(r => r.code.toUpperCase() === rideCode.trim().toUpperCase());
-      if (!ride) return { success: false, error: 'Ride code not found in database' };
+      const currentUser = this.getProfile(userId) || this.getActiveUser();
+      const cleanCode = (rideCode || '').trim().toUpperCase();
 
-      const existingMember = ride.members.find(m => m.userId === userId);
-      if (!existingMember) {
-        ride.members.push({ userId, role, status: 'ready', isLead: false });
-        const user = this.getProfile(userId);
-        ride.messages.push({
-          id: 'msg-' + Date.now(),
-          type: 'system',
-          text: `🏍️ ${user ? user.name : 'A rider'} joined the ride lobby`,
-          time: 'Just now'
+      let serverResponse = null;
+      try {
+        const res = await fetch(`${API_BASE}/rides/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: cleanCode, userId: currentUser ? currentUser.id : userId })
         });
-        saveDb(db);
+        serverResponse = await res.json();
+      } catch (e) {}
 
-        // Sync with local server
-        try {
-          fetch(`${API_BASE}/rides/join`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: rideCode, userId })
-          }).catch(() => {});
-        } catch (e) {}
+      const ride = (serverResponse && serverResponse.ride) || db.rides.find(r => (r.code || '').toUpperCase() === cleanCode);
+      if (!ride) return { success: false, error: 'Ride code not found. Please check the 6-character code.' };
+
+      const isCreator = ride.creator_id === (currentUser ? currentUser.id : userId) || ride.creatorId === (currentUser ? currentUser.id : userId);
+      const status = (serverResponse && serverResponse.status) || (isCreator ? 'ready' : 'pending');
+
+      // Update local member
+      const existingMember = (ride.members || []).find(m => m.userId === (currentUser ? currentUser.id : userId));
+      if (!existingMember) {
+        if (!ride.members) ride.members = [];
+        ride.members.push({
+          userId: currentUser ? currentUser.id : userId,
+          role: isCreator ? 'creator' : 'rider',
+          status,
+          isLead: isCreator
+        });
+      } else {
+        existingMember.status = status;
       }
-      return { success: true, ride };
+
+      // Add to local DB if not already present
+      const localIdx = db.rides.findIndex(r => r.id === ride.id);
+      if (localIdx >= 0) {
+        db.rides[localIdx] = ride;
+      } else {
+        db.rides.unshift(ride);
+      }
+      saveDb(db);
+
+      return {
+        success: true,
+        ride,
+        status,
+        isCreator,
+        message: isCreator ? 'Joined as Lead' : (status === 'ready' ? 'Joined Ride Lobby' : 'Join request sent to Ride Lead')
+      };
+    },
+
+    async approveMember(rideId, memberUserId, leadUserId, action = 'approve') {
+      const db = loadDb();
+      const ride = db.rides.find(r => r.id === rideId);
+      if (ride && ride.members) {
+        if (action === 'approve') {
+          const m = ride.members.find(mem => mem.userId === memberUserId);
+          if (m) m.status = 'ready';
+        } else {
+          ride.members = ride.members.filter(mem => mem.userId !== memberUserId);
+        }
+        saveDb(db);
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/rides/approve-member`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rideId, userId: memberUserId, leadId: leadUserId, action })
+        });
+        return await res.json();
+      } catch (e) {
+        return { success: true, localOnly: true };
+      }
+    },
+
+    async startLiveRide(rideId, leadUserId) {
+      const db = loadDb();
+      const ride = db.rides.find(r => r.id === rideId);
+      if (ride) {
+        ride.status = 'active';
+        saveDb(db);
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/rides/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rideId, leadId: leadUserId })
+        });
+        return await res.json();
+      } catch (e) {
+        return { success: true, status: 'active' };
+      }
     },
 
     // Waypoints

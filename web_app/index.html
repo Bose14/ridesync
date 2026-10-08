@@ -218,100 +218,176 @@
           </div>
         </section>
 
-        <!-- SCREEN 2: CREATE RIDE & ROUTE BUILDER -->
+        <!-- SCREEN 2: CREATE RIDE & ROUTE BUILDER (GOOGLE MAPS STYLE) -->
         <section id="screenCreateRide" class="screen">
           <div class="screen-top-bar">
             <button class="icon-back-btn" onclick="navigateTo('screenHome')">←</button>
-            <h2>Plan Group Ride</h2>
-            <button class="btn-ghost-save" onclick="saveAndProceedToLobby()">Save</button>
+            <h2 id="plannerScreenTitle">Plan Group Ride</h2>
+            <button class="btn-ghost-save" onclick="submitCreateOrSaveRide()">Create 🚀</button>
           </div>
 
           <div class="form-scrollable">
-            <div class="input-group">
-              <label>Ride Name</label>
-              <input type="text" id="inputRideName" class="app-input" value="Kodaikanal Weekend Ride" placeholder="e.g. Ooty Monsoon Ride" />
-            </div>
-
-            <div class="input-row-2">
+            <!-- Ride Basic Details -->
+            <div class="planner-card">
               <div class="input-group">
-                <label>Date</label>
-                <input type="date" class="app-input" id="inputRideDate" value="2026-10-10" />
+                <label>Ride Name</label>
+                <input type="text" id="inputRideName" class="app-input" value="Kodaikanal Weekend Ride" placeholder="e.g. Ooty Monsoon Ride, Nandi Sunrise" />
               </div>
-              <div class="input-group">
-                <label>Start Time</label>
-                <input type="time" class="app-input" id="inputRideTime" value="05:00" />
+
+              <div class="input-row-2">
+                <div class="input-group">
+                  <label>Date</label>
+                  <input type="date" class="app-input" id="inputRideDate" />
+                </div>
+                <div class="input-group">
+                  <label>Start Time</label>
+                  <input type="time" class="app-input" id="inputRideTime" value="05:30" />
+                </div>
               </div>
             </div>
 
-            <!-- Route Waypoints Section -->
-            <div class="section-title-row" style="margin-top: 16px;">
-              <div>
-                <h3 style="margin:0; font-size:16px;">Route & Stops (OSRM Ready)</h3>
-                <p class="sub-text">Drag or add fuel, tea, and viewpoints</p>
+            <!-- Google Maps Style Route Builder Box -->
+            <div class="gmaps-route-card">
+              <div class="gmaps-route-header">
+                <span class="gmaps-title">🏍️ Route & Stops</span>
+                <button class="btn-text-action" onclick="swapStartAndDestination()" title="Reverse Route">🔄 Reverse</button>
               </div>
-              <button class="btn-pill-action" onclick="openDiscoveryModal()">+ Discover Stops</button>
+
+              <!-- Start Location Input -->
+              <div class="gmaps-input-row" id="rowStartLocation">
+                <div class="gmaps-dot start-dot"></div>
+                <div class="gmaps-input-wrapper">
+                  <input type="text" id="inputStartLocation" class="gmaps-input" placeholder="Choose starting point..." autocomplete="off" oninput="handlePlaceSearch(this.value, 'start')" onfocus="showPlaceSuggestions('start')" />
+                  <button class="btn-gps-autofill" onclick="useCurrentLocationForStart()" title="Use my current GPS position">📍 GPS</button>
+                  <div class="gmaps-suggestions" id="startSuggestions" style="display:none;"></div>
+                </div>
+              </div>
+
+              <!-- Intermediate Stops Container -->
+              <div class="gmaps-stops-container" id="gmapsStopsContainer">
+                <!-- Dynamically populated stop rows -->
+              </div>
+
+              <!-- Destination Input -->
+              <div class="gmaps-input-row" id="rowDestLocation">
+                <div class="gmaps-dot dest-dot">🏁</div>
+                <div class="gmaps-input-wrapper">
+                  <input type="text" id="inputDestLocation" class="gmaps-input" placeholder="Choose destination..." autocomplete="off" oninput="handlePlaceSearch(this.value, 'dest')" onfocus="showPlaceSuggestions('dest')" />
+                  <div class="gmaps-suggestions" id="destSuggestions" style="display:none;"></div>
+                </div>
+              </div>
+
+              <!-- Quick Destination Chips -->
+              <div class="gmaps-quick-chips">
+                <span class="chip-lbl">Popular:</span>
+                <button class="gmaps-chip" onclick="quickSelectDestination('Kodaikanal Lake', 10.2350, 77.4900)">Kodaikanal</button>
+                <button class="gmaps-chip" onclick="quickSelectDestination('Ooty Botanical Gardens', 11.4167, 76.7167)">Ooty</button>
+                <button class="gmaps-chip" onclick="quickSelectDestination('Nandi Hills Sunrise Viewpoint', 13.3702, 77.6835)">Nandi Hills</button>
+                <button class="gmaps-chip" onclick="quickSelectDestination('Munnar Tea Estates', 10.0889, 77.0595)">Munnar</button>
+                <button class="gmaps-chip" onclick="quickSelectDestination('Valparai Ghats', 10.3242, 76.9558)">Valparai</button>
+              </div>
+
+              <!-- Add Stop Button -->
+              <div class="gmaps-add-stop-row">
+                <button class="btn-gmaps-add-stop" onclick="addIntermediateStopRow()">
+                  <span class="plus-icon">➕</span> Add Stop / Chai Halt / Fuel
+                </button>
+              </div>
             </div>
 
-            <div class="waypoint-list" id="waypointList">
-              <!-- Rendered dynamically from DB -->
+            <!-- Live Route Planner Interactive Map Preview -->
+            <div class="planner-map-card">
+              <div class="planner-map-header">
+                <div class="route-metrics-badge">
+                  <span id="plannerDistanceBadge">📍 0.0 km</span>
+                  <span class="metric-divider">&bull;</span>
+                  <span id="plannerDurationBadge">⏱️ ~0 mins</span>
+                </div>
+                <button class="btn-pill-action" onclick="openDiscoveryModal()">+ Discover Spots</button>
+              </div>
+              <div id="plannerMap" class="planner-leaflet-map"></div>
             </div>
 
-            <button class="btn-add-stop" onclick="promptAddCustomStop()">
-              ➕ Add Custom Stop / Waypoint
-            </button>
-
-            <!-- Planned Route Overview Box -->
-            <div class="route-preview-box">
-              <div class="route-stat">
-                <span class="lbl">Road Distance (OSRM)</span>
-                <span class="val" id="routeTotalDistance">324.8 km</span>
-              </div>
-              <div class="route-stat">
-                <span class="lbl">Riding Duration</span>
-                <span class="val" id="routeTotalTime">8 hrs 30 mins</span>
-              </div>
+            <!-- Bottom Submit Button -->
+            <div style="margin-top: 16px; margin-bottom: 24px;">
+              <button class="btn btn-primary btn-large-start" onclick="submitCreateOrSaveRide()">
+                🚀 CREATE RIDE & OPEN LOBBY
+              </button>
             </div>
           </div>
         </section>
 
-        <!-- SCREEN 3: RIDE LOBBY -->
+        <!-- SCREEN 3: RIDE LOBBY (DYNAMIC ROOM & JOIN REQUESTS) -->
         <section id="screenRideLobby" class="screen">
           <div class="screen-top-bar">
             <button class="icon-back-btn" onclick="navigateTo('screenHome')">←</button>
-            <h2>Ride Lobby</h2>
+            <h2>Ride Lobby Room</h2>
             <button class="icon-share-btn" onclick="shareRideCode()">📤</button>
           </div>
 
           <div class="lobby-content">
+            <!-- Ride Banner -->
             <div class="lobby-banner">
-              <span class="badge-code">RIDE CODE: <strong id="lobbyRideCode">KODAI26</strong></span>
-              <h2 class="lobby-ride-title" id="lobbyRideTitle">Kodaikanal Weekend Ride</h2>
-              <p class="lobby-ride-date" id="lobbyRideDateTime">Saturday, Oct 10 · 05:00 AM Departure</p>
+              <div class="lobby-code-row">
+                <span class="badge-code">RIDE CODE: <strong id="lobbyRideCode">------</strong></span>
+                <span class="lobby-role-pill" id="lobbyMyRoleBadge">👑 Lead</span>
+              </div>
+              <h2 class="lobby-ride-title" id="lobbyRideTitle">Group Ride</h2>
+              <p class="lobby-ride-date" id="lobbyRideDateTime">Departure: Loading...</p>
+              <div class="lobby-route-strip" id="lobbyRouteStrip">
+                <span id="lobbyStartSummary">Start</span> → <span id="lobbyDestSummary">Destination</span>
+              </div>
             </div>
 
             <!-- Share Invite Link Box -->
-            <div class="invite-box" onclick="copyInviteLink()">
+            <div class="invite-box">
               <div class="invite-info">
-                <span class="invite-title">Invite your riding group</span>
-                <span class="invite-sub" id="lobbyInviteLink">ridesync.app/join/KODAI26</span>
+                <span class="invite-title">Invite Riders to Join</span>
+                <span class="invite-sub" id="lobbyInviteLink">https://ridesync-test.netlify.app/?join=CODE</span>
               </div>
-              <button class="btn-copy">Copy</button>
+              <div class="invite-btns">
+                <button class="btn-copy" onclick="copyInviteLink()">📋 Copy</button>
+                <button class="btn-whatsapp" onclick="shareViaWhatsApp()">💬 WhatsApp</button>
+              </div>
             </div>
 
-            <!-- Riders Joined List -->
+            <!-- Permission Notice Banner -->
+            <div class="permission-notice-banner" id="lobbyPermissionBanner">
+              <span class="lock-icon">🔒</span>
+              <span id="lobbyPermissionText">Only Lead has permission to edit route and start the live ride.</span>
+            </div>
+
+            <!-- Pending Join Requests Section (Only visible to Lead when requests exist) -->
+            <div id="lobbyPendingRequestsSection" class="pending-requests-box" style="display:none;">
+              <div class="section-title-row">
+                <h3 style="color:var(--accent-orange); font-size:14px; display:flex; align-items:center; gap:6px;">
+                  <span class="live-pulse" style="background:#FF9100;"></span>
+                  Pending Join Requests (<span id="pendingRequestsCount">0</span>)
+                </h3>
+              </div>
+              <div class="pending-riders-list" id="pendingRidersContainer">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+
+            <!-- Approved Riders Roster -->
             <div class="section-title-row">
-              <h3 id="lobbyRidersCountHeader">Riders Joined (4)</h3>
-              <span class="badge-ready" id="lobbyReadyBadge">3 Ready</span>
+              <h3 id="lobbyRidersCountHeader">Approved Riders (1)</h3>
+              <span class="badge-ready" id="lobbyReadyBadge">Ready</span>
             </div>
 
             <div class="lobby-rider-list" id="lobbyRiderListContainer">
               <!-- Dynamically populated from DB -->
             </div>
 
-            <div class="lobby-actions">
-              <button class="btn btn-primary btn-large-start" onclick="startLiveRideSession()">
+            <!-- Lobby Bottom Action Buttons -->
+            <div class="lobby-actions" id="lobbyActionButtonsContainer">
+              <button class="btn btn-primary btn-large-start" id="btnStartLiveRide" onclick="handleStartLiveRide()">
                 🚀 START LIVE RIDE NOW
               </button>
+              <p class="lobby-waiting-hint" id="lobbyWaitingHint" style="display:none; text-align:center; color:var(--text-secondary); font-size:13px; margin-top:8px;">
+                ⏳ Waiting for Ride Lead to start the journey...
+              </p>
             </div>
           </div>
         </section>
@@ -631,7 +707,54 @@
         <input type="text" id="inputJoinRideCode" class="app-input" placeholder="e.g. KODAI26" style="text-transform:uppercase; font-size:20px; letter-spacing:2px; font-weight:800; text-align:center;" />
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" style="width:100%;" onclick="submitJoinRide()">Join Group Ride</button>
+        <button class="btn btn-primary" style="width:100%;" onclick="submitJoinRide()">Request to Join Ride</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: LEAD INCOMING JOIN REQUEST PROMPT -->
+  <div class="modal-backdrop" id="modalJoinApprovalPrompt">
+    <div class="modal-card" style="border: 2px solid var(--primary-orange);">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:20px;">🔔</span>
+          <h3 style="color:var(--primary-orange);">New Rider Join Request</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalJoinApprovalPrompt')">✕</button>
+      </div>
+      <div style="padding: 12px 0;">
+        <div class="request-rider-card" style="display:flex; align-items:center; gap:12px; background:var(--bg-elevated); padding:14px; border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
+          <div class="account-avatar" id="promptRiderAvatar" style="background:#00E5FF; font-size:18px; width:44px; height:44px;">R</div>
+          <div style="flex:1;">
+            <h4 id="promptRiderName" style="font-size:16px; margin-bottom:2px;">Rider Name</h4>
+            <p id="promptRiderBike" style="font-size:13px; color:var(--text-secondary); margin-bottom:2px;">Motorcycle Model</p>
+            <p id="promptRiderPhone" style="font-size:11px; color:var(--text-muted);">+91 98765 00000</p>
+          </div>
+        </div>
+        <p style="font-size:12px; color:var(--text-secondary); margin-top:12px; text-align:center;">
+          Allow this rider into your group ride lobby?
+        </p>
+      </div>
+      <div class="modal-footer" style="display:flex; gap:10px;">
+        <button class="btn btn-secondary" style="flex:1; border-color:var(--accent-red); color:var(--accent-red);" onclick="handlePromptDecline()">✕ Decline</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="handlePromptApprove()">✅ Approve Rider</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: RIDER JOIN REQUEST STATUS -->
+  <div class="modal-backdrop" id="modalJoinRequestStatus">
+    <div class="modal-card" style="text-align:center; padding:24px;">
+      <div style="font-size:48px; margin-bottom:12px;">⏳</div>
+      <h3 style="font-size:18px; margin-bottom:6px;">Join Request Sent!</h3>
+      <p style="color:var(--text-secondary); font-size:13px; margin-bottom:20px;">
+        Waiting for the Ride Lead (<strong id="pendingLeadName">Lead</strong>) to approve your request. You will be automatically admitted into the lobby.
+      </p>
+      <div class="badge-ready" style="display:inline-block; margin-bottom:16px;">
+        <span class="live-pulse"></span> Listening for Lead Approval
+      </div>
+      <div>
+        <button class="btn btn-secondary" onclick="closeModal('modalJoinRequestStatus')">Dismiss</button>
       </div>
     </div>
   </div>
