@@ -462,11 +462,14 @@
           <!-- Ultra-Clean Floating Bottom Riding Action Bar -->
           <div class="live-floating-bottom-bar">
             <div class="bottom-hud-actions">
-              <button class="btn-float-hud" onclick="fitAllRidersInView()" title="Fit all group riders in view">
+              <button class="btn-float-hud" id="btnFitAllHud" onclick="fitAllRidersInView()" title="Fit all group riders across locations">
                 👥 All Riders
               </button>
-              <button class="btn-float-hud" onclick="recenterOnGroup()" title="Recenter on My Location">
-                🎯 Recenter
+              <button class="btn-float-hud active-follow" id="btnRecenterHud" onclick="recenterOnGroup()" title="Recenter Close-Up Ride Navigation (Zoom 18.5)">
+                🎯 Ride View
+              </button>
+              <button class="btn-float-hud" id="btnCockpit3d" onclick="toggleCockpit3dPerspective()" title="Toggle 3D Cockpit Perspective / 2D Road View">
+                🕶️ 3D View
               </button>
               <button class="btn-float-hud" onclick="cycleMapLayer()" title="Switch Map Layer">
                 🗺️ Layer
