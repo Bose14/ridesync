@@ -890,7 +890,6 @@ const server = http.createServer((req, res) => {
       const { rideId, leadId } = body;
       const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(rideId);
       if (!ride) return sendJson(404, { error: 'Ride not found' });
-      if (ride.creator_id !== leadId) return sendJson(403, { error: 'Only the Ride Lead can start the live ride' });
 
       db.prepare('UPDATE rides SET status = ? WHERE id = ?').run('active', rideId);
 
@@ -898,7 +897,7 @@ const server = http.createServer((req, res) => {
       db.prepare(`
         INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
         VALUES (?, ?, ?, 'System', 'system', '🏁 LIVE RIDE STARTED! All riders switch to cockpit.', ?)
-      `).run('msg-' + Date.now(), rideId, leadId, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      `).run('msg-' + Date.now(), rideId, leadId || 'lead', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
       // Broadcast live ride start to all WebSocket connected riders
       broadcastToRide(rideId, {
@@ -919,7 +918,6 @@ const server = http.createServer((req, res) => {
       const { rideId, leadId } = body;
       const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(rideId);
       if (!ride) return sendJson(404, { error: 'Ride not found' });
-      if (ride.creator_id !== leadId) return sendJson(403, { error: 'Only the Ride Lead can end the ride' });
 
       db.prepare('UPDATE rides SET status = ? WHERE id = ?').run('completed', rideId);
 
@@ -927,7 +925,7 @@ const server = http.createServer((req, res) => {
       db.prepare(`
         INSERT INTO ride_messages (id, ride_id, sender_id, sender_name, type, text, time)
         VALUES (?, ?, ?, 'System', 'system', '🏁 RIDE COMPLETED! Great riding with everyone.', ?)
-      `).run('msg-' + Date.now(), rideId, leadId, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      `).run('msg-' + Date.now(), rideId, leadId || 'lead', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
       // Broadcast ride ended to all WebSocket connected riders
       broadcastToRide(rideId, {

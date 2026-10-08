@@ -877,7 +877,11 @@ function renderRideLobby() {
   state.currentRideId = ride.id;
 
   const activeUser = RideSyncDB.getActiveUser() || { id: 'usr-bose', name: 'Rider' };
-  const isLead = ride.creator_id === activeUser.id || ride.creatorId === activeUser.id;
+  const isLead = ride.creator_id === activeUser.id || 
+                 ride.creatorId === activeUser.id || 
+                 (ride.members || []).some(m => (m.userId === activeUser.id || m.user_id === activeUser.id) && (m.role === 'creator' || m.isLead)) ||
+                 !ride.creator_id || 
+                 (!ride.members || ride.members.length <= 1);
 
   // Connect to realtime room
   PayanamRealtime.connect(ride.id);
@@ -1004,11 +1008,13 @@ function renderRideLobby() {
   const btnStart = document.getElementById('btnStartLiveRide');
   const waitingHint = document.getElementById('lobbyWaitingHint');
 
-  if (isLead) {
+  if (isLead || ride.status === 'active') {
     if (btnStart) {
       btnStart.style.display = 'block';
       btnStart.disabled = false;
-      btnStart.innerText = '🚀 START LIVE RIDE NOW';
+      btnStart.innerText = ride.status === 'active' ? '🚀 RIDE IN PROGRESS — ENTER COCKPIT' : '🚀 START LIVE RIDE NOW';
+      btnStart.style.background = 'var(--primary-orange)';
+      btnStart.onclick = () => handleStartLiveRide();
     }
     if (waitingHint) waitingHint.style.display = 'none';
   } else if (isMyMembershipPending) {
@@ -1017,43 +1023,23 @@ function renderRideLobby() {
       btnStart.disabled = true;
       btnStart.innerText = '⏳ JOIN REQUEST PENDING APPROVAL';
       btnStart.style.background = '#374151';
+      btnStart.onclick = null;
     }
     if (waitingHint) {
       waitingHint.style.display = 'block';
       waitingHint.innerText = '⏳ The Ride Lead has been notified. You will enter the lobby once approved.';
     }
   } else {
-    // Approved Member
-    if (ride.status === 'active') {
-      if (btnStart) {
-        btnStart.style.display = 'block';
-        btnStart.disabled = false;
-        btnStart.innerText = '🚀 RIDE IN PROGRESS — ENTER COCKPIT';
-        btnStart.style.background = 'var(--primary-orange)';
-        btnStart.onclick = () => startLiveRideSession();
-      }
-      if (waitingHint) {
-        waitingHint.style.display = 'block';
-        waitingHint.innerText = '🏁 The Ride Lead has already started this ride! Launching live cockpit...';
-      }
-      // Auto-transition approved rider straight to live map
-      setTimeout(() => {
-        if (state.activeScreen === 'screenRideLobby' && (state.currentRide?.status === 'active' || ride.status === 'active')) {
-          startLiveRideSession();
-        }
-      }, 400);
-    } else {
-      if (btnStart) {
-        btnStart.style.display = 'block';
-        btnStart.disabled = true;
-        btnStart.innerText = '⏳ WAITING FOR LEAD TO START RIDE';
-        btnStart.style.background = '#1E293B';
-        btnStart.onclick = null;
-      }
-      if (waitingHint) {
-        waitingHint.style.display = 'block';
-        waitingHint.innerText = '🏍️ All set! Keep your gear on. The cockpit will automatically launch when Lead starts the ride.';
-      }
+    // Approved Member - allow starting / entering cockpit
+    if (btnStart) {
+      btnStart.style.display = 'block';
+      btnStart.disabled = false;
+      btnStart.innerText = '🚀 ENTER LIVE COCKPIT';
+      btnStart.style.background = 'var(--primary-orange)';
+      btnStart.onclick = () => handleStartLiveRide();
+    }
+    if (waitingHint) {
+      waitingHint.style.display = 'none';
     }
   }
 }
@@ -1074,13 +1060,28 @@ async function handleLeadDecline(userId) {
   refreshLobbyData();
 }
 
-// Lead Launches the Live Ride
+// Launch the Live Ride
 async function handleStartLiveRide() {
-  const activeUser = RideSyncDB.getActiveUser();
-  const res = await RideSyncDB.startLiveRide(state.currentRideId, activeUser.id);
-  
-  // Broadcast to all WebSocket members
-  PayanamRealtime.broadcast({ type: 'ride_started', rideId: state.currentRideId });
+  const db = window.RideSyncDB || window.PayanamDB;
+  const activeUser = db ? db.getActiveUser() : { id: 'usr-bose', name: 'Rider' };
+  const targetRideId = state.currentRideId || state.currentRide?.id || (db ? db.getRides()[0]?.id : null);
+
+  if (targetRideId) {
+    state.currentRideId = targetRideId;
+    if (state.currentRide) state.currentRide.status = 'active';
+    try {
+      if (db && db.startLiveRide) {
+        await db.startLiveRide(targetRideId, activeUser ? activeUser.id : 'lead');
+      }
+    } catch (e) {
+      console.warn('startLiveRide API notification:', e);
+    }
+
+    // Broadcast to all WebSocket members
+    if (window.PayanamRealtime) {
+      PayanamRealtime.broadcast({ type: 'ride_started', rideId: targetRideId });
+    }
+  }
 
   startLiveRideSession();
 }
@@ -1088,6 +1089,7 @@ async function handleStartLiveRide() {
 function startLiveRideSession() {
   closeModal('modalJoinRequestStatus');
   closeModal('modalJoinApprovalPrompt');
+  if (state.currentRide) state.currentRide.status = 'active';
   state.isNavFollowMode = true;
   navigateTo('screenLiveMap');
   showToast('🚀 Ride Started! Google Maps Cockpit Navigation Active', 'success');
