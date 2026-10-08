@@ -713,22 +713,39 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Get Rides with Members and Waypoints
+  function getEnrichedRide(rideIdOrCode) {
+    if (!rideIdOrCode) return null;
+    let r = null;
+    try {
+      r = db.prepare('SELECT * FROM rides WHERE id = ? OR UPPER(code) = UPPER(?)').get(rideIdOrCode, rideIdOrCode);
+    } catch(e) {}
+    if (!r) return null;
+
+    const members = db.prepare('SELECT * FROM ride_members WHERE ride_id = ?').all(r.id);
+    const waypoints = db.prepare('SELECT * FROM waypoints WHERE ride_id = ? ORDER BY sequence ASC').all(r.id);
+    const pins = db.prepare('SELECT * FROM ride_pins WHERE ride_id = ?').all(r.id);
+    const messages = db.prepare('SELECT * FROM ride_messages WHERE ride_id = ? ORDER BY created_at ASC').all(r.id);
+    return {
+      ...r,
+      members,
+      waypoints,
+      pins,
+      messages
+    };
+  }
+
+  // Get Single Ride by ID or Code (with Waypoints & Members)
+  if (pathname.startsWith('/api/rides/') && !pathname.endsWith('/waypoints') && !pathname.endsWith('/pins') && !pathname.endsWith('/messages') && !pathname.endsWith('/join') && !pathname.endsWith('/approve-member') && !pathname.endsWith('/start') && !pathname.endsWith('/end') && !pathname.endsWith('/telemetry') && req.method === 'GET') {
+    const targetId = pathname.replace('/api/rides/', '');
+    const enriched = getEnrichedRide(targetId);
+    if (enriched) return sendJson(200, enriched);
+    return sendJson(404, { error: 'Ride not found' });
+  }
+
+  // Get All Rides with Members and Waypoints
   if (pathname === '/api/rides' && req.method === 'GET') {
-    const rides = db.prepare('SELECT * FROM rides ORDER BY created_at DESC').all();
-    const enrichedRides = rides.map(r => {
-      const members = db.prepare('SELECT * FROM ride_members WHERE ride_id = ?').all(r.id);
-      const waypoints = db.prepare('SELECT * FROM waypoints WHERE ride_id = ? ORDER BY sequence ASC').all(r.id);
-      const pins = db.prepare('SELECT * FROM ride_pins WHERE ride_id = ?').all(r.id);
-      const messages = db.prepare('SELECT * FROM ride_messages WHERE ride_id = ? ORDER BY created_at ASC').all(r.id);
-      return {
-        ...r,
-        members,
-        waypoints,
-        pins,
-        messages
-      };
-    });
+    const rides = db.prepare('SELECT id FROM rides ORDER BY created_at DESC').all();
+    const enrichedRides = rides.map(r => getEnrichedRide(r.id)).filter(Boolean);
     return sendJson(200, enrichedRides);
   }
 
@@ -779,7 +796,7 @@ const server = http.createServer((req, res) => {
         VALUES (?, ?, ?, ?, 'system', ?, ?)
       `).run('msg-' + Date.now(), id, body.creatorId, creator ? creator.name : 'Lead', `🏍️ Ride lobby created by ${creator ? creator.name : 'Lead'}`, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
-      sendJson(200, { success: true, rideId: id, code });
+      sendJson(200, { success: true, rideId: id, code, ride: getEnrichedRide(id) });
     });
     return;
   }
@@ -815,7 +832,7 @@ const server = http.createServer((req, res) => {
 
       sendJson(200, {
         success: true,
-        ride,
+        ride: getEnrichedRide(ride.id),
         status: initialStatus,
         isCreator,
         message: isCreator ? 'Joined as Lead' : 'Join request sent to Ride Lead for approval'
@@ -851,7 +868,7 @@ const server = http.createServer((req, res) => {
           user: user ? formatProfileOutput(user) : null
         });
 
-        return sendJson(200, { success: true, status: 'ready', message: 'Rider approved' });
+        return sendJson(200, { success: true, status: 'ready', ride: getEnrichedRide(rideId), message: 'Rider approved' });
       } else {
         db.prepare('DELETE FROM ride_members WHERE ride_id = ? AND user_id = ?').run(rideId, userId);
         
@@ -887,10 +904,11 @@ const server = http.createServer((req, res) => {
       broadcastToRide(rideId, {
         type: 'ride_started',
         rideId,
-        status: 'active'
+        status: 'active',
+        ride: getEnrichedRide(rideId)
       });
 
-      sendJson(200, { success: true, status: 'active', message: 'Live ride started successfully' });
+      sendJson(200, { success: true, status: 'active', ride: getEnrichedRide(rideId), message: 'Live ride started successfully' });
     });
     return;
   }

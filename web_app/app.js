@@ -1244,9 +1244,15 @@ function handleRealtimeMessage(msg) {
     }
     refreshLobbyData();
   } else if (msg.type === 'ride_started') {
+    if (msg.ride) {
+      state.currentRide = msg.ride;
+      state.currentRideId = msg.ride.id;
+    }
     if (state.activeScreen === 'screenRideLobby') {
       showToast('🚀 Lead launched the ride! Entering live map cockpit...', 'success');
       startLiveRideSession();
+    } else if (state.activeScreen === 'screenLiveMap') {
+      if (msg.ride) drawRideRoutePath(msg.ride);
     }
   } else if (msg.type === 'ride_ended') {
     showToast('🏁 The Ride Lead has completed the ride!', 'info');
@@ -1559,28 +1565,30 @@ async function initOrUpdateLiveMap() {
     try { state.map.invalidateSize(); } catch(e) {}
   }
 
-  // Draw immediate fallback straight line so polyline is immediately visible
-  if (ride.waypoints && ride.waypoints.length >= 2) {
-    const coords = ride.waypoints.map(w => [w.lat, w.lng]);
-    if (!state.routePolylineLayer) {
-      state.routePolylineLayer = L.polyline(coords, {
-        color: '#FF6B00',
-        weight: 6,
-        opacity: 0.9,
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(state.map);
-    }
-  }
-
-  // Render Waypoint Markers & Live Dropped Pins
-  renderMapWaypoints(ride.waypoints || []);
-  renderMapPins(ride.pins || []);
-
   // Render Live Riders & Start Live Telemetry Broadcast
   renderRiderMarkers();
   renderRiderTelemetryCards();
   startLiveGpsBroadcast();
+
+  // Draw Full Ride Path Corridor & Waypoints
+  drawRideRoutePath(ride);
+
+  // Sync latest full ride route with all waypoints from backend server
+  if (ride && ride.id) {
+    const apiBase = RideSyncDB.getApiBaseUrl();
+    fetch(`${apiBase}/rides`)
+      .then(res => res.json())
+      .then(rides => {
+        if (Array.isArray(rides)) {
+          const current = rides.find(r => r.id === ride.id);
+          if (current) {
+            state.currentRide = current;
+            drawRideRoutePath(current);
+          }
+        }
+      })
+      .catch(() => {});
+  }
 
   // Immediately center on rider in Google Maps street-level Ride Navigation View
   setTimeout(() => {
@@ -1591,40 +1599,77 @@ async function initOrUpdateLiveMap() {
       }
     } catch(e) {}
   }, 250);
+}
 
-  // Fetch precision OSRM Road Geometry in the background (non-blocking)
-  if (ride.waypoints && ride.waypoints.length >= 2) {
-    const coords = ride.waypoints.map(w => [w.lat, w.lng]);
-    PayanamMaps.fetchRoadRoute(coords).then(roadRoute => {
-      if (roadRoute && roadRoute.latLngs && state.map) {
-        // 1. Draw 200m Buffer Corridor (Translucent Orange)
-        if (state.corridorLayer) state.map.removeLayer(state.corridorLayer);
-        state.corridorLayer = L.polyline(roadRoute.latLngs, {
-          color: '#FF6B00',
-          weight: 18,
-          opacity: 0.18,
-          lineCap: 'round',
-          lineJoin: 'round'
-        }).addTo(state.map);
+// Draw Complete Ride Route Path & Waypoints on Live Map for Lead and All Group Riders
+function drawRideRoutePath(ride) {
+  if (!state.map || !ride) return;
 
-        // 2. Draw Sharp Center Polyline
-        if (state.routePolylineLayer) state.map.removeLayer(state.routePolylineLayer);
-        state.routePolylineLayer = L.polyline(roadRoute.latLngs, {
-          color: '#FF6B00',
-          weight: 6,
-          opacity: 0.9,
-          lineCap: 'round',
-          lineJoin: 'round'
-        }).addTo(state.map);
-
-        // Update Navigation Banner with first maneuver
-        if (roadRoute.steps && roadRoute.steps.length > 0) {
-          state.navSteps = roadRoute.steps;
-          updateNavBanner(roadRoute.steps[0], roadRoute.distanceKm);
-        }
-      }
-    }).catch(err => console.warn('Background OSRM route fetch notice:', err));
+  // 1. Reconstruct waypoints if array is missing or incomplete
+  let waypoints = Array.isArray(ride.waypoints) ? [...ride.waypoints] : [];
+  if (waypoints.length < 2) {
+    const sLat = ride.start_lat ?? ride.startLat;
+    const sLng = ride.start_lng ?? ride.startLng;
+    const dLat = ride.dest_lat ?? ride.destLat;
+    const dLng = ride.dest_lng ?? ride.destLng;
+    if (typeof sLat === 'number' && typeof sLng === 'number' && typeof dLat === 'number' && typeof dLng === 'number') {
+      waypoints = [
+        { id: 1, name: ride.start_address || ride.startAddress || 'Start Point', type: 'start', icon: '🟢', lat: sLat, lng: sLng },
+        { id: 999, name: ride.dest_address || ride.destAddress || 'Destination', type: 'destination', icon: '🏁', lat: dLat, lng: dLng }
+      ];
+      ride.waypoints = waypoints;
+    }
   }
+
+  if (waypoints.length < 2) return;
+
+  const coords = waypoints.map(w => [w.lat, w.lng]);
+
+  // 2. Draw immediate fallback straight line so polyline is immediately visible
+  if (!state.routePolylineLayer) {
+    state.routePolylineLayer = L.polyline(coords, {
+      color: '#FF6B00',
+      weight: 6,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(state.map);
+  }
+
+  // Render Waypoint Markers & Live Dropped Pins
+  renderMapWaypoints(waypoints);
+  renderMapPins(ride.pins || []);
+
+  // 3. Fetch precision OSRM Road Geometry in the background (non-blocking)
+  PayanamMaps.fetchRoadRoute(coords).then(roadRoute => {
+    if (roadRoute && roadRoute.latLngs && state.map) {
+      // 1. Draw 200m Buffer Corridor (Translucent Orange)
+      if (state.corridorLayer) state.map.removeLayer(state.corridorLayer);
+      state.corridorLayer = L.polyline(roadRoute.latLngs, {
+        color: '#FF6B00',
+        weight: 18,
+        opacity: 0.18,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(state.map);
+
+      // 2. Draw Sharp Center Polyline
+      if (state.routePolylineLayer) state.map.removeLayer(state.routePolylineLayer);
+      state.routePolylineLayer = L.polyline(roadRoute.latLngs, {
+        color: '#FF6B00',
+        weight: 6,
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(state.map);
+
+      // Update Navigation Banner with first maneuver
+      if (roadRoute.steps && roadRoute.steps.length > 0) {
+        state.navSteps = roadRoute.steps;
+        updateNavBanner(roadRoute.steps[0], roadRoute.distanceKm || ride.distance_km || ride.distanceKm || 0);
+      }
+    }
+  }).catch(err => console.warn('Background OSRM route fetch notice:', err));
 }
 
 function updateNavBanner(step, totalDistance) {
