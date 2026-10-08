@@ -927,39 +927,112 @@ const GoogleMapsStyleUI = (function () {
   // ===== EVENT LISTENERS =====
 
   function attachEventListeners() {
-    document.getElementById('gmBtnVoice')?.addEventListener('click', () => {
-      voiceEnabled = !voiceEnabled;
-      const btn = document.getElementById('gmBtnVoice');
-      btn.style.opacity = voiceEnabled ? '1' : '0.5';
-      showAlert(voiceEnabled ? 'Voice enabled' : 'Voice disabled', '', 'success');
-    });
+    // Voice Toggle Button
+    const voiceBtn = document.getElementById('gmBtnVoice');
+    if (voiceBtn) {
+      voiceBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        voiceEnabled = !voiceEnabled;
+        voiceBtn.style.opacity = voiceEnabled ? '1' : '0.5';
+        showAlert(voiceEnabled ? 'Voice enabled' : 'Voice disabled', '', 'success');
+      });
+    }
 
-    document.getElementById('gmBtnExit')?.addEventListener('click', () => {
-      stopNavigation();
-      showAlert('Navigation ended', 'Safe travels!', 'success');
-    });
+    // Cancel/Exit Navigation Button
+    const exitBtn = document.getElementById('gmBtnExit');
+    if (exitBtn) {
+      exitBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.confirmExitRide) {
+          window.confirmExitRide();
+        } else {
+          stopNavigation();
+        }
+        showAlert('Navigation ended', 'Safe travels!', 'success');
+      });
+    }
 
-    document.getElementById('gmBtnRecenter')?.addEventListener('click', () => {
-      // Zoom back to street-level on rider
-      const mapInstance = window.map || window.leafletMap;
-      if (window.NavigationEngine) {
-        window.NavigationEngine.recenterOnRider(mapInstance);
-      } else if (window.recenterOnGroup) {
-        window.recenterOnGroup(false);
-      }
-      showAlert('Recentered', 'Zoomed to street-level view', 'success');
-    });
+    // Recenter Button - Center map on rider
+    const recenterBtn = document.getElementById('gmBtnRecenter');
+    if (recenterBtn) {
+      recenterBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          // Try NavigationEngine first
+          if (window.NavigationEngine && window.NavigationEngine.recenterOnRider) {
+            const mapInstance = window.map || window.leafletMap;
+            window.NavigationEngine.recenterOnRider(mapInstance);
+            showAlert('Recentered', 'Zoomed to street-level', 'success');
+          }
+          // Fallback to app.js function
+          else if (window.recenterOnGroup) {
+            window.recenterOnGroup(false);
+            showAlert('Recentered', 'Focusing on your position', 'success');
+          }
+          // Last fallback - pan map manually
+          else if (window.state && window.state.map && window.state.userGps) {
+            window.state.map.panTo([window.state.userGps.lat, window.state.userGps.lng]);
+            if (window.state.map.setZoom) window.state.map.setZoom(18);
+            showAlert('Recentered', 'Zoomed to street-level', 'success');
+          }
+        } catch (err) {
+          console.error('Recenter error:', err);
+          showAlert('Recenter', 'Centering on your position', 'info');
+        }
+      });
+    }
 
-    document.getElementById('gmBtnOverview')?.addEventListener('click', () => {
-      // Show route overview (zoomed out)
-      const mapInstance = window.map || window.leafletMap;
-      if (window.NavigationEngine) {
-        window.NavigationEngine.showRoute(mapInstance);
-      } else if (window.fitAllRidersInView) {
-        window.fitAllRidersInView();
-      }
-      showAlert('Route Overview', 'Showing full route', 'success');
-    });
+    // Route Overview Button - Show full route
+    const overviewBtn = document.getElementById('gmBtnOverview');
+    if (overviewBtn) {
+      overviewBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          // Try NavigationEngine first
+          if (window.NavigationEngine && window.NavigationEngine.showRoute) {
+            const mapInstance = window.map || window.leafletMap;
+            window.NavigationEngine.showRoute(mapInstance);
+            showAlert('Route Overview', 'Showing full route', 'success');
+          }
+          // Fallback to app.js function
+          else if (window.fitAllRidersInView) {
+            window.fitAllRidersInView();
+            showAlert('Route Overview', 'Showing full route', 'success');
+          }
+          // Last fallback - zoom out map
+          else if (window.state && window.state.map) {
+            window.state.map.setZoom(14);
+            showAlert('Route Overview', 'Zoomed out to see route', 'info');
+          }
+        } catch (err) {
+          console.error('Overview error:', err);
+          showAlert('Route Overview', 'Loading route overview', 'info');
+        }
+      });
+    }
+
+    // Compass/Follow Mode Button
+    const compassBtn = document.getElementById('gmBtnCompass');
+    if (compassBtn) {
+      let followMode = false;
+      compassBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        followMode = !followMode;
+        compassBtn.style.opacity = followMode ? '1' : '0.6';
+
+        if (window.state) {
+          window.state.isNavFollowMode = followMode;
+        }
+        showAlert(followMode ? 'Follow Mode ON' : 'Follow Mode OFF',
+                  followMode ? 'Map will follow your movement' : 'Map movement disabled',
+                  'success');
+      });
+    }
   }
 
   function stopNavigation() {
