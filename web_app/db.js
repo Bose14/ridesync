@@ -602,6 +602,39 @@ const RideSyncDB = (function () {
       }
     },
 
+    // Update Live Rider Telemetry (GPS coordinates, speed, heading, battery)
+    async sendRiderTelemetry(rideId, telemetry) {
+      if (!rideId || !telemetry.userId) return;
+
+      // Update in local database state
+      const db = loadDb();
+      const ride = (db.rides || []).find(r => r.id === rideId);
+      if (ride && ride.members) {
+        const member = ride.members.find(m => (m.userId || m.user_id) === telemetry.userId);
+        if (member) {
+          member.last_lat = telemetry.lat;
+          member.last_lng = telemetry.lng;
+          member.speed = telemetry.speed ?? member.speed;
+          member.heading = telemetry.heading ?? member.heading;
+          member.battery = telemetry.battery ?? member.battery;
+          member.status = telemetry.status || member.status;
+          member.last_seen = telemetry.lastSeen || 'Just now';
+          saveDb(db);
+        }
+      }
+
+      // Sync with backend server
+      if (isServerConnected) {
+        try {
+          await fetch(`${API_BASE}/rides/${rideId}/telemetry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(telemetry)
+          });
+        } catch (e) {}
+      }
+    },
+
     // Map & API Configuration
     getMapConfig: loadMapConfig,
     setMapConfig: saveMapConfig,

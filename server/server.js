@@ -166,6 +166,12 @@ function initSchema() {
       user_id TEXT NOT NULL,
       role TEXT DEFAULT 'rider',
       status TEXT DEFAULT 'ready',
+      last_lat REAL,
+      last_lng REAL,
+      speed REAL DEFAULT 0,
+      heading REAL DEFAULT 0,
+      battery INTEGER DEFAULT 100,
+      last_seen TEXT,
       joined_at TEXT DEFAULT (datetime('now')),
       UNIQUE(ride_id, user_id),
       FOREIGN KEY (ride_id) REFERENCES rides(id),
@@ -216,6 +222,14 @@ function initSchema() {
       expires_at INTEGER NOT NULL
     );
   `);
+
+  // Safe migrations for existing SQLite database files
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN last_lat REAL'); } catch(e) {}
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN last_lng REAL'); } catch(e) {}
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN speed REAL DEFAULT 0'); } catch(e) {}
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN heading REAL DEFAULT 0'); } catch(e) {}
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN battery INTEGER DEFAULT 100'); } catch(e) {}
+  try { db.exec('ALTER TABLE ride_members ADD COLUMN last_seen TEXT'); } catch(e) {}
 
   console.log('[RideSync DB] Database schema initialized (Clean Mode - 0 test data).');
 }
@@ -958,6 +972,57 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Update Rider Telemetry (GPS position, speed, heading, battery, status)
+  if (pathname.startsWith('/api/rides/') && pathname.endsWith('/telemetry') && req.method === 'POST') {
+    const rideId = pathname.replace('/api/rides/', '').replace('/telemetry', '');
+    getJsonBody((err, body) => {
+      const { userId, lat, lng, speed, heading, battery, status } = body;
+      if (!userId || lat === undefined || lng === undefined) {
+        return sendJson(400, { error: 'userId, lat, and lng are required' });
+      }
+
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      try {
+        db.prepare(`
+          UPDATE ride_members SET
+            last_lat = ?,
+            last_lng = ?,
+            speed = COALESCE(?, speed),
+            heading = COALESCE(?, heading),
+            battery = COALESCE(?, battery),
+            status = COALESCE(?, status),
+            last_seen = ?
+          WHERE ride_id = ? AND user_id = ?
+        `).run(lat, lng, speed ?? 0, heading ?? 0, battery ?? 100, status || 'riding', timeStr, rideId, userId);
+      } catch (e) {
+        console.warn('[Telemetry DB Error]:', e);
+      }
+
+      const user = db.prepare('SELECT * FROM profiles WHERE id = ?').get(userId);
+
+      const telemetryPayload = {
+        type: 'location_update',
+        rideId,
+        userId,
+        name: user ? user.name : (body.name || 'Rider'),
+        lat,
+        lng,
+        speed: speed ?? 0,
+        heading: heading ?? 0,
+        battery: battery ?? 100,
+        status: status || 'riding',
+        lastSeen: timeStr
+      };
+
+      // Broadcast via WebSocket to all connected peers in this ride
+      broadcastToRide(rideId, telemetryPayload);
+
+      sendJson(200, { success: true, telemetry: telemetryPayload });
+    });
+    return;
+  }
+
   // Offline Telemetry Batch Sync (flushes queued points recorded during dead zones)
   if (pathname === '/api/telemetry/batch' && req.method === 'POST') {
     getJsonBody((err, body) => {
@@ -1035,6 +1100,22 @@ server.on('upgrade', (req, socket, head) => {
       } else if (msg.type === 'location_update' || msg.type === 'quick_pin' || msg.type === 'sos_alert' || msg.type === 'batch_telemetry') {
         const rideId = msg.rideId || currentRideId;
         if (rideId) {
+          if (msg.type === 'location_update' && msg.userId && msg.lat !== undefined && msg.lng !== undefined) {
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            try {
+              db.prepare(`
+                UPDATE ride_members SET
+                  last_lat = ?,
+                  last_lng = ?,
+                  speed = COALESCE(?, speed),
+                  heading = COALESCE(?, heading),
+                  battery = COALESCE(?, battery),
+                  status = COALESCE(?, status),
+                  last_seen = ?
+                WHERE ride_id = ? AND user_id = ?
+              `).run(msg.lat, msg.lng, msg.speed ?? 0, msg.heading ?? 0, msg.battery ?? 100, msg.status || 'riding', timeStr, rideId, msg.userId);
+            } catch(e) {}
+          }
           broadcastToRide(rideId, msg, socket);
         }
       }
