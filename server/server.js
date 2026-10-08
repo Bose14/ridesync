@@ -847,6 +847,7 @@ const server = http.createServer((req, res) => {
           type: 'member_approved',
           rideId,
           userId,
+          rideStatus: ride.status,
           user: user ? formatProfileOutput(user) : null
         });
 
