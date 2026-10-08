@@ -92,7 +92,7 @@ function decodeWsFrame(buffer) {
 
 
 const PORT = process.env.PORT || 5000;
-const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'ridesync.db');
+const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'payanam.db');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // 1. Load or Create Configuration

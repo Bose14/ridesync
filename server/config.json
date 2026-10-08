@@ -1,6 +1,6 @@
 {
   "dbDriver": "local-sqlite",
-  "sqliteFile": "server/ridesync.db",
+  "sqliteFile": "server/payanam.db",
   "supabaseUrl": "",
   "supabaseAnonKey": "",
   "postgresUrl": ""
